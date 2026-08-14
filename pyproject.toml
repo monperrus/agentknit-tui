@@ -25,7 +25,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7", "pytest-asyncio>=0.23"]
+test = ["pytest>=7", "pytest-asyncio>=0.23", "pytest-cov>=4"]
 
 [project.scripts]
 agentknit-tui = "agentknit_tui.cli:main"
