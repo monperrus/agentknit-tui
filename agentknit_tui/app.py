@@ -172,19 +172,9 @@ class AgentTUI(App):
         self._max_output_tokens = max_output_tokens
         self._strict_cache_proof = strict_cache_proof
 
-        self._client = create_client(schema)
-        self._session = init_session(
-            schema,
-            non_interactive=non_interactive,
-            resumed_from=session_id,
-            system_prompt_supplement=system_prompt_supplement,
-            max_output_tokens=max_output_tokens,
-            strict_cache_proof=strict_cache_proof,
-            on_event=self._on_event,
-        )
-        self._model_name = self._session.get("model") or schema.get("model", "agent")
-
-        # Event plumbing.
+        # Event plumbing — must exist *before* init_session: resuming a
+        # session (--session <id>) emits `session_resumed` synchronously from
+        # inside init_session, and _on_event enqueues onto _event_q.
         self._event_q: queue.Queue[_QueuedEvent | None] = queue.Queue()
         self._decoder = AnsiDecoder()
         self._cancel_token: CancelToken | None = None
@@ -196,6 +186,18 @@ class AgentTUI(App):
         # Tracks whether content_delta was seen for the *current* turn, so
         # final_answer can skip re-printing text that was already streamed.
         self._streamed_content: bool = False
+
+        self._client = create_client(schema)
+        self._session = init_session(
+            schema,
+            non_interactive=non_interactive,
+            resumed_from=session_id,
+            system_prompt_supplement=system_prompt_supplement,
+            max_output_tokens=max_output_tokens,
+            strict_cache_proof=strict_cache_proof,
+            on_event=self._on_event,
+        )
+        self._model_name = self._session.get("model") or schema.get("model", "agent")
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
 

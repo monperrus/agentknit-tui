@@ -111,6 +111,46 @@ async def test_boot_renders_header_and_tools(monkeypatch: pytest.MonkeyPatch) ->
 
 
 @pytest.mark.asyncio
+async def test_resume_session_survives_sync_event_from_init_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: `--session <id>` must not crash at construction time.
+
+    Resuming emits `session_resumed` *synchronously* from inside
+    `init_session`, i.e. while `AgentTUI.__init__` is still running. The
+    event queue must therefore exist before `init_session` is called.
+    """
+    import agentknit_tui.app as appmod
+    from agentknit_tui.app import AgentTUI
+
+    _patch_no_network(monkeypatch)
+
+    def fake_init_session(schema: dict, *, on_event: Any = None,
+                          resumed_from: str | None = None, **_: Any) -> dict:
+        assert resumed_from == "4e55afe7c1ce"
+        on_event("session_resumed", {
+            "session_id": resumed_from,
+            "messages_loaded": 3,
+            "fmt": "\033[2mResumed session 4e55afe7c1ce "
+                   "(3 messages in context)\033[0m",
+        })
+        return {"session_id": resumed_from, "model": schema["model"],
+                "messages": [{"role": "user", "content": "hi"}] * 3,
+                "log_path": "/tmp/does-not-matter.jsonl"}
+
+    monkeypatch.setattr(appmod, "init_session", fake_init_session)
+    app = AgentTUI(_make_schema(), non_interactive=True, session_id="4e55afe7c1ce")
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await _wait_for_log(app, lambda t: "Resumed session 4e55afe7c1ce" in t)
+        text = _log_text(app)
+        assert "3 messages in context" in text
+        assert app.session_id == "4e55afe7c1ce"
+        app.exit()
+
+
+@pytest.mark.asyncio
 async def test_enter_submits_and_renders_turn(monkeypatch: pytest.MonkeyPatch) -> None:
     import asyncio  # noqa: F401
 
