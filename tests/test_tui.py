@@ -185,7 +185,8 @@ async def test_usage_goes_to_status_bar_not_log(
         assert "[session tokens]" not in log_text
         # The status bar reflects the totals.
         status = app.query_one("#status")
-        status_plain = status.content.plain if hasattr(status.content, "plain") else str(status.content)
+        content = status.content
+        status_plain = content.plain if hasattr(content, "plain") else str(content)
         assert "1,500" in status_plain
         assert "800" in status_plain
         assert "cached" in status_plain
@@ -294,7 +295,9 @@ def test_build_schema_from_argv_defaults(monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_capture_slash_returns_output(monkeypatch: pytest.MonkeyPatch) -> None:
     import io
+
     from agentknit.slash_commands import REGISTRY
+
     from agentknit_tui.app import _capture_slash
 
     session = {"messages": [], "model": "x", "session_id": "abc",

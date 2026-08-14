@@ -32,6 +32,15 @@ import shlex
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import agentknit
+from agentknit import (
+    CancelToken,
+    create_client,
+    init_session,
+    load_specification,
+)
+from agentknit import _core as _ak_core
+from agentknit.slash_commands import REGISTRY as _slash_registry
 from rich.ansi import AnsiDecoder
 from rich.console import Group
 from rich.markdown import Markdown
@@ -44,16 +53,6 @@ from textual.containers import Vertical
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Footer, Header, Label, RichLog, TextArea
-
-import agentknit
-from agentknit import (
-    CancelToken,
-    create_client,
-    init_session,
-    load_specification,
-)
-from agentknit import _core as _ak_core
-from agentknit.slash_commands import REGISTRY as _slash_registry
 
 if TYPE_CHECKING:
     from textual.events import Key
@@ -388,7 +387,7 @@ class AgentTUI(App):
         before our app-level handler runs.
         """
 
-        async def _on_key(self, event: "Key") -> None:  # type: ignore[override]
+        async def _on_key(self, event: Key) -> None:  # type: ignore[override]
             key = event.key
             if key in ("shift+enter", "ctrl+enter", "alt+enter"):
                 event.prevent_default()
@@ -411,7 +410,7 @@ class AgentTUI(App):
         # no-op: reserved for future input-length mirroring in the status bar.
         return
 
-    def on_key(self, event: "Key") -> None:
+    def on_key(self, event: Key) -> None:
         # Key handling for the prompt lives on PromptInput itself (it must
         # override TextArea._on_key, which consumes bare Enter before app-level
         # handlers run). Nothing to do here; kept for future global shortcuts.
