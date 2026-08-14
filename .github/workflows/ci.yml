@@ -22,8 +22,8 @@ jobs:
         include:
           - os: macos-latest
             python-version: "3.13"
-          - os: windows-latest
-            python-version: "3.13"
+    # NOTE: no windows — the `agentknit` dependency imports `readline`,
+    # which is not available on Windows Python.
     steps:
       - uses: actions/checkout@v4
 
