@@ -34,6 +34,7 @@ agentknit-tui --no-strict-cache-proof
 | -------------------- | ------------------------------- |
 | `Enter`              | submit the prompt               |
 | `Shift/Ctrl/Alt+Enter` | insert a newline              |
+| `↑` / `↓`            | recall past prompts (same folder, shared with the REPL) |
 | `Esc` / `Ctrl+C`     | cancel the running turn (or quit when idle) |
 | `Ctrl+L`             | clear the conversation log      |
 
@@ -69,6 +70,12 @@ AgentTUI(schema, non_interactive=True).run()
 - Multi-line input uses `TextArea`, so users can paste and edit freely.
   A `CancelToken` is wired to the cancel bindings so a turn can be
   interrupted cooperatively, exactly like Ctrl+C in the REPL.
+- Prompt history is per-folder and shared with the REPL: both read and
+  write agentknit's readline history file
+  (`~/.local/share/agent_probe/repl_history/<md5(cwd)>.hist`), so arrow-up
+  recalls instructions typed in either front-end, scoped to the folder they
+  were typed in. `↑` on the first prompt line walks back, `↓` forward, and
+  any edit drops back to normal typing.
 - agentknit installs a module-level SIGINT handler (meant for the
   foreground REPL) that kills the active tool subprocess. The TUI
   neutralises it for each turn's duration and drives cancellation through

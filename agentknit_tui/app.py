@@ -54,6 +54,8 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Footer, Header, Label, RichLog, TextArea
 
+from ._history import PromptHistory
+
 if TYPE_CHECKING:
     from textual.events import Key
 
@@ -188,6 +190,7 @@ class AgentTUI(App):
         self._streamed_content: bool = False
 
         self._client = create_client(schema)
+        self._history = PromptHistory()
         self._session = init_session(
             schema,
             non_interactive=non_interactive,
@@ -235,11 +238,12 @@ class AgentTUI(App):
             f"session {self.session_id} · log {_session_log_path(self._session)}",
             style="dim"))
         log.write(Text(
-            "Enter submits · Shift/Ctrl/Alt+Enter newline · Esc cancels "
-            "· Ctrl+C copies selection (or cancels) · /help · /exit to quit",
+            "Enter submits · Shift/Ctrl/Alt+Enter newline · ↑/↓ history "
+            "· Esc cancels · Ctrl+C copies selection (or cancels) · /help · /exit",
             style="dim italic"))
         log.write(Text(""))
 
+        self.query_one("#prompt", AgentTUI.PromptInput).attach_history(self._history)
         self.query_one("#prompt", TextArea).focus()
 
     # ── agentknit event subscription (runs on the worker thread) ──────────────
@@ -394,7 +398,22 @@ class AgentTUI(App):
         chords (``Shift``/``Ctrl``/``Alt``+``Enter``). Without this override
         ``TextArea._on_key`` would consume bare ``Enter`` to insert a ``\\n``
         before our app-level handler runs.
+
+        History recall borrows readline's ergonomics: ``up`` on the first
+        line walks back through previously submitted prompts (one per press,
+        even if an entry wraps across several display rows), ``down`` walks
+        forward again, and any other key returns to live editing while
+        keeping the recalled text in place.
         """
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self._hist: PromptHistory | None = None
+            self._hist_index: int | None = None  # None: not browsing
+            self._hist_draft: str = ""  # in-progress text saved on first ↑
+
+        def attach_history(self, history: PromptHistory) -> None:
+            self._hist = history
 
         async def _on_key(self, event: Key) -> None:  # type: ignore[override]
             key = event.key
@@ -406,11 +425,70 @@ class AgentTUI(App):
             if key == "enter":
                 event.prevent_default()
                 event.stop()
+                self.reset_history_browsing()
                 self.post_message(AgentTUI.PromptSubmitted(self.text))
                 return
+            if key == "up":
+                first_row = self.selection.start[0] == 0
+                if first_row and self._history_prev():
+                    event.prevent_default()
+                    event.stop()
+                    return
+            elif key == "down":
+                last_row = self.selection.start[0] == self.document.line_count - 1
+                if last_row and self._history_next():
+                    event.prevent_default()
+                    event.stop()
+                    return
+            # Any edit leaves history browsing but keeps the recalled text in
+            # place — pressing ↑ again re-enters browsing from the top.
+            if self._hist_index is not None and key not in ("up", "down"):
+                self._hist_index = None
             # Defer everything else (printable chars, arrows, backspace, …)
             # to TextArea's default key handling.
             await super()._on_key(event)
+
+        # ── history navigation ────────────────────────────────────────────────
+
+        def _history_prev(self) -> bool:
+            """Step one entry back in history; False if already oldest."""
+            if not self._hist:
+                return False
+            newest = len(self._hist) - 1
+            if self._hist_index is None:
+                if newest < 0:
+                    return False
+                self._hist_draft = self.text  # entering browsing: park the draft
+                self._hist_index = newest
+            elif self._hist_index > 0:
+                self._hist_index -= 1
+            else:
+                return False
+            self._load_history_entry(self._hist[self._hist_index])
+            return True
+
+        def _history_next(self) -> bool:
+            """Step one entry forward; False when back to live editing."""
+            if not self._hist or self._hist_index is None:
+                return False
+            if self._hist_index >= len(self._hist) - 1:
+                # Past the oldest-known entry: back to the parked draft.
+                self._hist_index = None
+                self._load_history_entry(self._hist_draft)
+                return True
+            self._hist_index += 1
+            self._load_history_entry(self._hist[self._hist_index])
+            return True
+
+        def reset_history_browsing(self) -> None:
+            """Drop back to live editing (called after a submit)."""
+            self._hist_index = None
+            self._hist_draft = ""
+
+        def _load_history_entry(self, text: str) -> None:
+            """Replace the prompt contents with *text*, cursor to the end."""
+            self.load_text(text)
+            self.move_cursor(self.document.end, center=True)
 
     @on(TextArea.Changed)
     def _maybe_clear_idle_hint(self, event: TextArea.Changed) -> None:
@@ -431,10 +509,15 @@ class AgentTUI(App):
             return
 
         # Reset the prompt for the next turn.
-        self.query_one("#prompt", TextArea).load_text("")
+        prompt = self.query_one("#prompt", AgentTUI.PromptInput)
+        prompt.reset_history_browsing()
+        prompt.load_text("")
 
         log = self.query_one("#conversation", RichLog)
         log.write(self._render_user(text))
+
+        # Persist for arrow-up recall in this folder (shared with the REPL).
+        self._history.record(text)
 
         lowered = text.lower()
         if lowered in ("/exit", "/quit", "exit", "quit"):

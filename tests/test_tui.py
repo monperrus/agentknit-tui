@@ -437,6 +437,165 @@ def test_build_schema_from_argv_defaults(monkeypatch: pytest.MonkeyPatch) -> Non
     assert kwargs["strict_cache_proof"] is True
 
 
+@pytest.mark.asyncio
+async def test_arrow_up_recalls_prompts_from_this_folder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """↑ walks back through past instructions recorded for this folder."""
+    from agentknit_tui.app import AgentTUI
+
+    _patch_no_network(monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        ta = app.query_one("#prompt")
+        ta.focus()
+        await pilot.pause()
+
+        # Submit two prompts, then reload the history the prompt widget uses
+        # (the app loaded it once at construction, before any submissions).
+        for text in ("first task", "second task"):
+            ta.load_text(text)
+            await pilot.press("enter")
+            await pilot.pause()
+        ta.attach_history(app._history)
+
+        await pilot.press("up")
+        await pilot.pause()
+        assert ta.text == "second task"
+
+        await pilot.press("up")
+        await pilot.pause()
+        assert ta.text == "first task"
+
+        # ↓ walks forward again, ending back at the empty prompt.
+        await pilot.press("down")
+        await pilot.pause()
+        assert ta.text == "second task"
+        await pilot.press("down")
+        await pilot.pause()
+        assert ta.text == ""
+        app.exit()
+
+
+@pytest.mark.asyncio
+async def test_history_recalls_prompts_typed_in_the_repl(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Entries the line REPL wrote to its readline file are recallable in the TUI."""
+    from agentknit_tui._history import history_file_for
+    from agentknit_tui.app import AgentTUI
+
+    _patch_no_network(monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    hist_file = history_file_for()
+    hist_file.parent.mkdir(parents=True, exist_ok=True)
+    hist_file.write_text("repl instruction\nanother one\n", encoding="utf-8")
+
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        ta = app.query_one("#prompt")
+        ta.focus()
+        await pilot.pause()
+        await pilot.press("up")
+        await pilot.pause()
+        assert ta.text == "another one"
+        await pilot.press("up")
+        await pilot.pause()
+        assert ta.text == "repl instruction"
+        app.exit()
+
+
+@pytest.mark.asyncio
+async def test_history_parks_draft_and_survives_edit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """↑ parks the in-progress draft; ↓ at the end restores it."""
+    from agentknit_tui.app import AgentTUI
+
+    _patch_no_network(monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        ta = app.query_one("#prompt")
+        ta.focus()
+        await pilot.pause()
+        ta.attach_history(app._history)
+
+        ta.load_text("draft in progress")
+        await pilot.press("up")  # no history yet: ↑ must do nothing
+        await pilot.pause()
+        assert ta.text == "draft in progress"
+
+        ta.load_text("first task")
+        await pilot.press("enter")
+        await pilot.pause()
+        ta.load_text("draft in progress")
+        await pilot.press("up")  # recall "first task", parking the draft
+        await pilot.pause()
+        assert ta.text == "first task"
+        await pilot.press("down")  # forward past the oldest → draft restored
+        await pilot.pause()
+        assert ta.text == "draft in progress"
+
+        # Editing a recalled entry keeps the text; ↑ starts a fresh browse.
+        await pilot.press("up")
+        await pilot.pause()
+        assert ta.text == "first task"
+        await pilot.press("space")
+        await pilot.press("x")
+        await pilot.pause()
+        assert ta.text == "first task x"
+        await pilot.press("up")
+        await pilot.pause()
+        assert ta.text == "first task"
+        app.exit()
+
+
+@pytest.mark.asyncio
+async def test_arrow_up_inside_multiline_prompt_moves_cursor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """↑ on a later line of a multiline draft must move the cursor, not recall."""
+    from agentknit_tui.app import AgentTUI
+
+    _patch_no_network(monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        ta = app.query_one("#prompt")
+        ta.focus()
+        await pilot.pause()
+        ta.attach_history(app._history)
+
+        ta.load_text("first task")
+        await pilot.press("enter")
+        await pilot.pause()
+        ta.load_text("line one\nline two")
+        ta.move_cursor((1, 4))  # cursor on the second line
+        await pilot.press("up")
+        await pilot.pause()
+        assert ta.text == "line one\nline two"  # unchanged
+        assert ta.cursor_location[0] == 0  # cursor moved up a row
+
+        # ↑ again from the first line now recalls history.
+        await pilot.press("up")
+        await pilot.pause()
+        assert ta.text == "first task"
+        app.exit()
+
+
 def test_capture_slash_returns_output(monkeypatch: pytest.MonkeyPatch) -> None:
     import io
 
