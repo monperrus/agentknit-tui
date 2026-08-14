@@ -524,11 +524,16 @@ class AgentTUI(App):
             self.exit()
             return
         if lowered == "/clear":
-            # /clear the conversation log only (agent context is owned by the
-            # session — use /clear-sent-by-agent for that).
+            # The TUI intercepts /clear: wipe the displayed log only. The
+            # agent's message history (LLM context) is untouched.
             log.clear()
             log.write(self._header_panel())
             return
+        if lowered == "/reset-context":
+            # Route to the registry's real /clear handler, which resets the
+            # session message history (keeping the system prompt) and the
+            # usage/compaction counters — then refresh the log too.
+            text = "/clear"
 
         # Slash command? agentknit's registry prints to stdout; capture it.
         if text.startswith("/"):

@@ -3,11 +3,14 @@
 A [Textual](https://textual.textualize.io/) TUI front-end for
 [agentknit](https://github.com/monperrus/agentknit) coding agents.
 
-It replaces the classic line-based REPL (`agentknit.run_repl`) with a
-persistent terminal UI: one always-visible conversation pane, a multiline
-prompt at the bottom, tool calls / results / token accounting rendered
-inline, and a live status bar. The agent loop itself is unchanged — the TUI
-is a pure subscriber to the same `on_event` stream the REPL already prints.
+Features: 
+- one always-visible conversation pane
+- a multiline prompt at the bottom, 
+- tool calls / results / token accounting rendered
+inline
+- a live status bar. 
+
+the TUI is a pure subscriber to the event stream from agentknit.
 
 ## Install
 
@@ -36,26 +39,16 @@ agentknit-tui --no-strict-cache-proof
 | `Shift/Ctrl/Alt+Enter` | insert a newline              |
 | `↑` / `↓`            | recall past prompts (same folder, shared with the REPL) |
 | `Esc` / `Ctrl+C`     | cancel the running turn (or quit when idle) |
-| `Ctrl+L`             | clear the conversation log      |
+| `Ctrl+L`             | clear the on-screen conversation log only |
 
-Slash commands (`/help`, `/usage`, `/clear`, `/compact`, `/model`, `/exit`)
+`Ctrl+L` (and the TUI's built-in `/clear` alias) wipes the displayed log;
+the agent's message history — the context sent to the model — is untouched.
+To reset the LLM context (session history, keeping the system prompt), run
+`/reset-context` in the TUI; it forwards to agentknit's `/clear` handler.
+
+Slash commands (`/help`, `/usage`, `/clear`, `/compact`, `/model`, `/reset-context`, `/exit`)
 are forwarded to agentknit's command registry; their printed output is
 captured and shown inline.
-
-### Embedding
-
-Wrapper scripts that already build their own schema can use the app directly:
-
-```python
-from agentknit import load_specification
-from agentknit_tui import AgentTUI
-
-schema = load_specification("glm-5.2", "https://api.z.ai/api/coding/paas/v4")
-schema["keyring_service"]  = "z.ai"
-schema["keyring_username"] = "api_key"
-
-AgentTUI(schema, non_interactive=True).run()
-```
 
 ## Design notes
 
