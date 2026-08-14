@@ -64,6 +64,18 @@ def _log_text(app: Any) -> str:
     return "\n".join("".join(seg.text for seg in line) for line in log.lines)
 
 
+def _log_colors(app: Any) -> set[str]:
+    """Collect colour names used across the conversation log's segments."""
+    colors: set[str] = set()
+    log = app.query_one("#conversation")
+    for line in log.lines:
+        for seg in line:
+            color = getattr(seg.style, "color", None)
+            if color is not None and color.name:
+                colors.add(color.name)
+    return colors
+
+
 @pytest.mark.asyncio
 async def test_boot_renders_header_and_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     from agentknit_tui.app import AgentTUI
@@ -311,6 +323,43 @@ async def test_streamed_tool_result_renders_full_output(
         assert "(output streamed above)" not in text
         assert "file1.py" in text
         assert "file2.py" in text
+        # exit 0 renders green
+        assert "green" in _log_colors(app)
+        app.exit()
+
+
+@pytest.mark.asyncio
+async def test_streamed_tool_result_failure_renders_red(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-zero exit codes render red with the exit code in the title."""
+    import json
+
+    from agentknit_tui.app import AgentTUI, _QueuedEvent
+
+    _patch_no_network(monkeypatch)
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    payload = json.dumps(
+        {"stdout": "", "stderr": "boom\n", "returncode": 2},
+        separators=(",", ":"),
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app._event_q.put(_QueuedEvent("tool_result", {
+            "name": "shell", "result": payload, "streamed": True,
+            "fmt": "\033[2m  (output streamed above)\033[0m",
+        }))
+        app._event_q.put(None)
+        await pilot.pause()
+        await pilot.pause()
+        text = _log_text(app)
+        assert "boom" in text
+        assert "exit 2" in text
+        colours = _log_colors(app)
+        assert "red" in colours
+        assert "green" not in colours
         app.exit()
 
 

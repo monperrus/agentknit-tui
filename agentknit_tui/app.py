@@ -603,6 +603,8 @@ class AgentTUI(App):
         stdout in the REPL. The TUI never shows stdout, so re-render from the
         event's structured ``result`` payload (JSON for shell tools, plain
         text otherwise), capped like the engine's own formatter.
+
+        Green when the command exited 0, red otherwise.
         """
         import json
 
@@ -610,6 +612,7 @@ class AgentTUI(App):
         raw = data.get("result") or ""
 
         body = raw
+        returncode = 0
         # Shell tool results are JSON envelopes; unwrap for readability.
         try:
             parsed = json.loads(raw)
@@ -623,8 +626,9 @@ class AgentTUI(App):
                     chunks.extend(m.get("text", "") for m in parsed["matches"])
                 if chunks:
                     body = "\n".join(chunks)
-                if isinstance(parsed.get("returncode"), int) and parsed["returncode"]:
-                    body += f"\n[exit {parsed['returncode']}]"
+                rc = parsed.get("returncode")
+                if isinstance(rc, int):
+                    returncode = rc
         except (ValueError, TypeError):
             pass
 
@@ -632,10 +636,17 @@ class AgentTUI(App):
         if len(lines) > 40:
             body = "\n".join(lines[:40]) + f"\n… ({len(lines) - 40} more lines)"
 
+        ok = returncode == 0
+        colour = "green" if ok else "red"
+        title = f"⟨{name} output⟩" if body else f"⟨{name}: no output⟩"
+        if not ok:
+            # Escape the bracket: "[exit 2]" would parse as Rich markup.
+            title += f" \\[exit {returncode}]"
+
         return Panel(
-            Text(body, style="dim"),
-            border_style="magenta",
-            title=f"⟨{name} output⟩" if body else f"⟨{name}: no output⟩",
+            Text(body, style=f"dim {colour}"),
+            border_style=colour,
+            title=title,
             title_align="left",
             padding=(0, 1),
         )
