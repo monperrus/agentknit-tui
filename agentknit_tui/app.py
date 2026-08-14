@@ -351,6 +351,13 @@ class AgentTUI(App):
             return
 
         if et in _PASSTHROUGH_EVENTS and fmt:
+            # The engine's `fmt` replaces streamed output with the placeholder
+            # "(output streamed above)" — the live lines went to stdout, which
+            # the TUI never shows. Render the full result from the event data
+            # instead so tool output is visible in the conversation log.
+            if et == "tool_result" and data.get("streamed"):
+                log.write(self._render_tool_result(data))
+                return
             log.write(self._ansi(fmt))
             return
 
@@ -587,6 +594,51 @@ class AgentTUI(App):
         if len(segments) == 1:
             return segments[0]
         return Group(*segments)
+
+    def _render_tool_result(self, data: dict) -> Any:
+        """Render the full body of a streamed tool result.
+
+        For streamed results the engine's ``fmt`` is just the placeholder
+        ``(output streamed above)`` because the real lines went straight to
+        stdout in the REPL. The TUI never shows stdout, so re-render from the
+        event's structured ``result`` payload (JSON for shell tools, plain
+        text otherwise), capped like the engine's own formatter.
+        """
+        import json
+
+        name = data.get("name", "tool")
+        raw = data.get("result") or ""
+
+        body = raw
+        # Shell tool results are JSON envelopes; unwrap for readability.
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                chunks: list[str] = []
+                if parsed.get("stdout"):
+                    chunks.append(parsed["stdout"].rstrip())
+                if parsed.get("stderr"):
+                    chunks.append(parsed["stderr"].rstrip())
+                if isinstance(parsed.get("matches"), list):
+                    chunks.extend(m.get("text", "") for m in parsed["matches"])
+                if chunks:
+                    body = "\n".join(chunks)
+                if isinstance(parsed.get("returncode"), int) and parsed["returncode"]:
+                    body += f"\n[exit {parsed['returncode']}]"
+        except (ValueError, TypeError):
+            pass
+
+        lines = body.splitlines()
+        if len(lines) > 40:
+            body = "\n".join(lines[:40]) + f"\n… ({len(lines) - 40} more lines)"
+
+        return Panel(
+            Text(body, style="dim"),
+            border_style="magenta",
+            title=f"⟨{name} output⟩" if body else f"⟨{name}: no output⟩",
+            title_align="left",
+            padding=(0, 1),
+        )
 
     def _header_panel(self) -> Panel:
         return Panel(

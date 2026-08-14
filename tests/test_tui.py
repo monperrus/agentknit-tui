@@ -272,6 +272,48 @@ async def test_paste_into_prompt(
         app.exit()
 
 
+@pytest.mark.asyncio
+async def test_streamed_tool_result_renders_full_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Streamed tool results must show real output, not the placeholder.
+
+    In the REPL, streamed tool output goes straight to stdout and the
+    tool_result fmt is "(output streamed above)". The TUI never shows
+    stdout, so it must re-render from the structured result payload.
+    """
+    import json
+
+    from agentknit_tui.app import AgentTUI, _QueuedEvent
+
+    _patch_no_network(monkeypatch)
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    payload = json.dumps(
+        {"stdout": "file1.py\nfile2.py\n", "stderr": "", "returncode": 0},
+        separators=(",", ":"),
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app._event_q.put(_QueuedEvent("tool_call", {
+            "name": "shell", "args": {"command": "ls"},
+            "fmt": "\033[36m▶ shell(command='ls')\033[0m",
+        }))
+        app._event_q.put(_QueuedEvent("tool_result", {
+            "name": "shell", "result": payload, "streamed": True,
+            "fmt": "\033[2m  (output streamed above)\033[0m",
+        }))
+        app._event_q.put(None)
+        await pilot.pause()
+        await pilot.pause()
+        text = _log_text(app)
+        assert "(output streamed above)" not in text
+        assert "file1.py" in text
+        assert "file2.py" in text
+        app.exit()
+
+
 def test_build_schema_from_argv_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     import agentknit_tui.app as appmod
 
