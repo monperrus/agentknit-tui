@@ -234,8 +234,8 @@ class AgentTUI(App):
             f"session {self.session_id} · log {_session_log_path(self._session)}",
             style="dim"))
         log.write(Text(
-            "Enter submits · Shift/Ctrl/Alt+Enter newline · Esc/Ctrl+C cancels "
-            "· /help for commands · /exit to quit",
+            "Enter submits · Shift/Ctrl/Alt+Enter newline · Esc cancels "
+            "· Ctrl+C copies selection (or cancels) · /help · /exit to quit",
             style="dim italic"))
         log.write(Text(""))
 
@@ -462,6 +462,15 @@ class AgentTUI(App):
     # ── actions (bindings) ────────────────────────────────────────────────────
 
     def action_cancel_or_quit(self) -> None:
+        # If the user has a text selection active in the conversation log,
+        # Ctrl+C should copy it rather than quit/cancel. Textual's built-in
+        # copy lives on a non-priority binding that our priority Ctrl+C
+        # binding shadows, so we re-route here.
+        selected = self._selected_text()
+        if selected:
+            self.copy_to_clipboard(selected)
+            self.screen.clear_selection()
+            return
         if self.busy:
             self.action_maybe_cancel()
         else:
@@ -495,6 +504,43 @@ class AgentTUI(App):
         token usage is fed here from the ``usage`` / ``session_usage`` events
         instead of being printed into the conversation log.
         """
+
+    def _conversation_log(self) -> RichLog:
+        return self.query_one("#conversation", RichLog)
+
+    def _selected_text(self) -> str | None:
+        """Text currently selected in the conversation log, if any.
+
+        Textual's ``RichLog`` renders line-by-line, so the default
+        ``Widget.get_selection`` (which inspects ``_render()``) returns empty.
+        We reconstruct the selection from the stored line strips instead.
+        """
+        from textual.selection import Selection
+
+        screen = self.screen
+        log = self._conversation_log()
+        selection = screen.selections.get(log) if screen.selections else None
+        if selection is None or not isinstance(selection, Selection):
+            return None
+        start, end = selection.start, selection.end
+        # Normalise so start <= end.
+        if (start[0], start[1]) > (end[0], end[1]):
+            start, end = end, start
+        lines = log.lines
+        out: list[str] = []
+        for y in range(start[0], min(end[0], len(lines)) + 1):
+            if y >= len(lines):
+                break
+            row = "".join(seg.text for seg in lines[y])
+            if y == start[0] and y == end[0]:
+                row = row[start[1]:end[1]]
+            elif y == start[0]:
+                row = row[start[1]:]
+            elif y == end[0]:
+                row = row[:end[1]]
+            out.append(row)
+        text = "\n".join(out).strip()
+        return text or None
 
     def _status_text(self) -> Text:
         parts = [Text(self.model, style="bold")]

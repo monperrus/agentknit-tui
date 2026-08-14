@@ -192,6 +192,85 @@ async def test_usage_goes_to_status_bar_not_log(
         app.exit()
 
 
+@pytest.mark.asyncio
+async def test_ctrl_c_copies_selection_instead_of_quitting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ctrl+C with an active text selection must copy, not exit the app."""
+    from textual.selection import Selection
+
+    from agentknit_tui.app import AgentTUI
+
+    _patch_no_network(monkeypatch)
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation")
+        conv.write("Hello world copy me")
+        await pilot.pause()
+        # Find the rendered row and select "Hello world" within it.
+        for y, strip in enumerate(conv.lines):
+            row = "".join(seg.text for seg in strip)
+            if "Hello world" in row:
+                col = row.index("Hello")
+                app.screen.selections = {
+                    conv: Selection((y, col), (y, col + len("Hello world")))
+                }
+                break
+        else:
+            pytest.fail("expected row not found in conversation log")
+        await pilot.pause()
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert app.clipboard == "Hello world"
+        # App must still be running — the key copied instead of quitting.
+        assert app.is_running
+        app.exit()
+
+
+@pytest.mark.asyncio
+async def test_ctrl_c_without_selection_cancels_or_quits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No selection: Ctrl+C must fall through to quit (idle) as before."""
+    from agentknit_tui.app import AgentTUI
+
+    _patch_no_network(monkeypatch)
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        assert not app.screen.selections
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert app.return_code == 0
+
+
+@pytest.mark.asyncio
+async def test_paste_into_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Terminal paste events land in the prompt TextArea."""
+    from textual import events
+
+    from agentknit_tui.app import AgentTUI
+
+    _patch_no_network(monkeypatch)
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        ta = app.query_one("#prompt")
+        ta.focus()
+        await pilot.pause()
+        app.post_message(events.Paste(text="pasted text"))
+        await pilot.pause()
+        await pilot.pause()
+        assert "pasted text" in ta.text
+        app.exit()
+
+
 def test_build_schema_from_argv_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     import agentknit_tui.app as appmod
 
