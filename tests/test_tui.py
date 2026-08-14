@@ -76,6 +76,24 @@ def _log_colors(app: Any) -> set[str]:
     return colors
 
 
+async def _wait_for_log(
+    app: Any, predicate: Any, *, timeout: float = 5.0, interval: float = 0.05
+) -> None:
+    """Poll the conversation log until *predicate* passes.
+
+    Event rendering is driven by a 50 ms drain timer, so a fixed number of
+    `pilot.pause()` calls races it on slow machines. Poll instead.
+    """
+    import asyncio
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate(_log_text(app)):
+            return
+        await asyncio.sleep(interval)
+
+
 @pytest.mark.asyncio
 async def test_boot_renders_header_and_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     from agentknit_tui.app import AgentTUI
@@ -159,8 +177,7 @@ async def test_streaming_then_final_answer_no_duplicate(
         app._event_q.put(_QueuedEvent("content_stream_end", {}))
         app._event_q.put(_QueuedEvent("final_answer", {"text": "Hello world"}))
         app._event_q.put(None)
-        await pilot.pause()
-        await pilot.pause()
+        await _wait_for_log(app, lambda t: t.count("Hello world") == 1)
         text = _log_text(app)
         # Streamed content renders exactly once; final_answer does not double it.
         assert text.count("Hello world") == 1
@@ -188,9 +205,7 @@ async def test_usage_goes_to_status_bar_not_log(
             "fmt": "\033[35m[session tokens] prompt 1,200\033[0m",
         }))
         app._event_q.put(None)
-        await pilot.pause()
-        await pilot.pause()
-        await pilot.pause()
+        await _wait_for_log(app, lambda t: "1,500" in app.query_one("#status").content.plain)
         log_text = _log_text(app)
         # No token line leaks into the conversation log.
         assert "[tokens]" not in log_text
@@ -317,8 +332,7 @@ async def test_streamed_tool_result_renders_full_output(
             "fmt": "\033[2m  (output streamed above)\033[0m",
         }))
         app._event_q.put(None)
-        await pilot.pause()
-        await pilot.pause()
+        await _wait_for_log(app, lambda t: "file1.py" in t and "file2.py" in t)
         text = _log_text(app)
         assert "(output streamed above)" not in text
         assert "file1.py" in text
@@ -352,8 +366,7 @@ async def test_streamed_tool_result_failure_renders_red(
             "fmt": "\033[2m  (output streamed above)\033[0m",
         }))
         app._event_q.put(None)
-        await pilot.pause()
-        await pilot.pause()
+        await _wait_for_log(app, lambda t: "boom" in t)
         text = _log_text(app)
         assert "boom" in text
         assert "exit 2" in text
