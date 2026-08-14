@@ -66,8 +66,6 @@ def _log_text(app: Any) -> str:
 
 @pytest.mark.asyncio
 async def test_boot_renders_header_and_tools(monkeypatch: pytest.MonkeyPatch) -> None:
-    import asyncio
-
     from agentknit_tui.app import AgentTUI
 
     _patch_no_network(monkeypatch)
@@ -154,6 +152,43 @@ async def test_streaming_then_final_answer_no_duplicate(
         text = _log_text(app)
         # Streamed content renders exactly once; final_answer does not double it.
         assert text.count("Hello world") == 1
+        app.exit()
+
+
+@pytest.mark.asyncio
+async def test_usage_goes_to_status_bar_not_log(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Token usage must update the status bar and never print into the log."""
+    from agentknit_tui.app import AgentTUI, _QueuedEvent
+
+    _patch_no_network(monkeypatch, final_text="done")
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app._event_q.put(_QueuedEvent("usage", {
+            "prompt": 1200, "completion": 300, "total": 1500,
+            "cached": 800, "fmt": "\033[35m[tokens] prompt 1,200\033[0m",
+        }))
+        app._event_q.put(_QueuedEvent("session_usage", {
+            "prompt": 1200, "completion": 300, "cached": 800,
+            "fmt": "\033[35m[session tokens] prompt 1,200\033[0m",
+        }))
+        app._event_q.put(None)
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
+        log_text = _log_text(app)
+        # No token line leaks into the conversation log.
+        assert "[tokens]" not in log_text
+        assert "[session tokens]" not in log_text
+        # The status bar reflects the totals.
+        status = app.query_one("#status")
+        status_plain = status.content.plain if hasattr(status.content, "plain") else str(status.content)
+        assert "1,500" in status_plain
+        assert "800" in status_plain
+        assert "cached" in status_plain
         app.exit()
 
 

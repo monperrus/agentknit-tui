@@ -43,7 +43,7 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.message import Message
 from textual.reactive import reactive
-from textual.widgets import Footer, Header, RichLog, TextArea
+from textual.widgets import Footer, Header, Label, RichLog, TextArea
 
 import agentknit
 from agentknit import (
@@ -108,7 +108,6 @@ class AgentTUI(App):
 
     #prompt-row {
         height: auto;
-        dock: bottom;
         padding: 0 1 0 0;
     }
     #prompt-label {
@@ -130,7 +129,6 @@ class AgentTUI(App):
     }
 
     #status {
-        dock: bottom;
         height: 1;
         background: $boost;
         color: $text-muted;
@@ -210,6 +208,7 @@ class AgentTUI(App):
             with Vertical(id="prompt-row"):
                 yield self.PromptInput("", id="prompt", classes="PromptInput",
                                        soft_wrap=True)
+            yield self.StatusBar(id="status")
         yield Footer()
         # 50 ms timer to drain queued events from the worker thread.
         self.set_interval(0.05, self._drain_events)
@@ -302,13 +301,15 @@ class AgentTUI(App):
         et, data = ev.event_type, ev.data
         fmt = data.get("fmt")
 
-        # Mirror usage totals into the status bar.
+        # Mirror usage totals into the status bar, then suppress the
+        # per-message `[tokens]` line — usage lives in the status bar only.
         if et in ("usage", "session_usage"):
             for k, attr in (("prompt", "prompt_tokens"),
                             ("completion", "completion_tokens"),
                             ("cached", "cached_tokens")):
                 if k in data:
                     setattr(self, attr, int(data[k] or 0))
+            return
 
         if et == "content_delta":
             self._streamed_content = True
@@ -482,7 +483,52 @@ class AgentTUI(App):
     def watch_busy(self, busy: bool) -> None:  # noqa: D401
         self.sub_title = (f"{self._model_name} · working…"
                           if busy else self._model_name)
+        self._refresh_status()
         self.refresh()
+
+    # ── status bar ────────────────────────────────────────────────────────────
+
+    class StatusBar(Label):
+        """A single-line status bar reflecting model, session and token usage.
+
+        Subscribed to the app's reactives via :meth:`AgentTUI._refresh_status`;
+        token usage is fed here from the ``usage`` / ``session_usage`` events
+        instead of being printed into the conversation log.
+        """
+
+    def _status_text(self) -> Text:
+        parts = [Text(self.model, style="bold")]
+        parts.append(Text(" · ", style="dim"))
+        parts.append(Text(f"session {self.session_id}", style="dim"))
+        if self.prompt_tokens or self.completion_tokens:
+            usage_bits = [f"tokens {self.prompt_tokens + self.completion_tokens:,}"]
+            if self.cached_tokens:
+                usage_bits.append(f"({self.cached_tokens:,} cached)")
+            parts.append(Text(" · ", style="dim"))
+            parts.append(Text(" ".join(usage_bits), style="cyan"))
+        if self.busy:
+            parts.append(Text(" · ", style="dim"))
+            parts.append(Text("working…", style="yellow"))
+        return Text.assemble(*parts)
+
+    def _refresh_status(self) -> None:
+        bar = self.query_one("#status", Label)
+        bar.update(self._status_text())
+
+    def watch_model(self, value: str) -> None:
+        self._refresh_status()
+
+    def watch_session_id(self, value: str) -> None:
+        self._refresh_status()
+
+    def watch_prompt_tokens(self, value: int) -> None:
+        self._refresh_status()
+
+    def watch_completion_tokens(self, value: int) -> None:
+        self._refresh_status()
+
+    def watch_cached_tokens(self, value: int) -> None:
+        self._refresh_status()
 
     # ── rendering helpers ─────────────────────────────────────────────────────
 
