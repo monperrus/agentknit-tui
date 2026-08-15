@@ -29,6 +29,8 @@ import io
 import os
 import queue
 import shlex
+import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -660,14 +662,41 @@ class AgentTUI(App):
 
     # ── actions (bindings) ────────────────────────────────────────────────────
 
+    def _copy_selection(self, text: str) -> None:
+        """Copy ``text`` to the system clipboard.
+
+        ``App.copy_to_clipboard`` only writes an OSC 52 escape and hopes the
+        terminal stack honors it — VTE-based terminals (Terminator, older
+        gnome-terminal) silently ignore it, so the copy vanishes. Fall back
+        to the platform clipboard tool when one is available (xclip/xsel,
+        wl-copy, pbcopy, clip.exe); if none is, keep the OSC 52 route.
+        """
+        self.copy_to_clipboard(text)
+        for tool, args in (
+            ("xclip", ("xclip", "-selection", "clipboard", "-in")),
+            ("xsel", ("xsel", "--clipboard", "--input")),
+            ("wl-copy", ("wl-copy",)),
+            ("pbcopy", ("pbcopy",)),
+            ("clip.exe", ("clip.exe",)),
+        ):
+            if shutil.which(tool):
+                try:
+                    subprocess.run(args, input=text.encode("utf-8"),
+                                   check=True, timeout=2,
+                                   stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL)
+                except (OSError, subprocess.SubprocessError):
+                    continue  # try the next tool / keep OSC 52 only
+                return
+
     def action_cancel_or_quit(self) -> None:
         # If the user has a text selection active in the conversation log,
-        # Ctrl+C should copy it rather than quit/cancel. Textual's built-in
-        # copy lives on a non-priority binding that our priority Ctrl+C
+        # the copy chord should copy it rather than quit/cancel. Textual's
+        # built-in copy lives on a non-priority binding that our priority
         # binding shadows, so we re-route here.
         selected = self._selected_text()
         if selected:
-            self.copy_to_clipboard(selected)
+            self._copy_selection(selected)
             self.screen.clear_selection()
             return
         if self.busy:

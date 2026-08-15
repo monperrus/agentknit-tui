@@ -50,9 +50,10 @@ agentknit-tui --no-strict-cache-proof
 - Paste into the prompt with the terminal's own paste (`Ctrl+Shift+V`,
   `Shift+Insert`, or middle-click) — `Ctrl+V` inside the TUI only reads
   text copied *within* the TUI.
-- Copies travel via OSC 52; inside tmux use `set -s set-clipboard on` and
-  an OSC-52-capable outer terminal (kitty, alacritty, wezterm, iTerm2…).
-  `Shift+drag` always falls back to the terminal's native selection.
+- Copying tries the platform clipboard tool first (`xclip`/`xsel`, `wl-copy`,
+  `pbcopy`, `clip.exe`) and also emits OSC 52; one of the two reaches the
+  system clipboard even in VTE terminals that ignore OSC 52 (Terminator,
+  older gnome-terminal).
 
 `Ctrl+L` (and the TUI's built-in `/clear` alias) wipes the displayed log;
 the agent's message history — the context sent to the model — is untouched.
