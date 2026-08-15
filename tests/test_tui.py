@@ -298,6 +298,51 @@ async def test_ctrl_c_copies_selection_instead_of_quitting(
 
 
 @pytest.mark.asyncio
+async def test_ctrl_c_copies_whole_log_when_drag_yields_select_all(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real drag over the RichLog yields SELECT_ALL, not character offsets.
+
+    RichLog renders line strips without per-cell ``offset`` style metadata,
+    so Textual's compositor cannot map the drag to a character range and
+    falls back to ``Selection(None, None)`` (select-all). The app must copy
+    the visible log in that case instead of raising TypeError.
+    """
+    from textual import events
+    from textual.selection import Selection
+
+    from agentknit_tui.app import AgentTUI
+
+    _patch_no_network(monkeypatch)
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation")
+        conv.write("Hello world copy me")
+        await pilot.pause()
+        # Simulate a real drag through the driver so the selection goes
+        # through Screen's select machinery, exactly as a terminal drag does.
+        await pilot.mouse_down(conv, offset=(2, 4))
+        for x in range(3, 12):
+            app._driver.process_message(
+                events.MouseMove(widget=app.screen, x=x, y=4,
+                                 delta_x=1, delta_y=0, button=0,
+                                 shift=False, meta=False, ctrl=False))
+        await pilot.pause()
+        await pilot.mouse_up(conv, offset=(11, 4))
+        await pilot.pause()
+        selection = app.screen.selections.get(conv)
+        assert selection is not None
+        assert selection == Selection(None, None)  # SELECT_ALL, not offsets
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert "Hello world copy me" in app.clipboard
+        assert app.is_running
+        app.exit()
+
+
+@pytest.mark.asyncio
 async def test_ctrl_c_without_selection_cancels_or_quits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

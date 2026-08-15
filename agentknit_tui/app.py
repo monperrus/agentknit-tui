@@ -674,10 +674,15 @@ class AgentTUI(App):
     def _selected_text(self) -> str | None:
         """Text currently selected in the conversation log, if any.
 
-        Textual's ``RichLog`` renders line-by-line, so the default
-        ``Widget.get_selection`` (which inspects ``_render()``) returns empty.
-        We reconstruct the selection from the stored line strips instead.
+        Textual's ``RichLog`` renders line strips without per-cell ``offset``
+        style metadata (unlike ``Log``, which calls ``Strip.apply_offsets``),
+        so the compositor cannot map a drag to character offsets and falls
+        back to ``SELECT_ALL`` — ``Selection(None, None)``. The default
+        ``Widget.get_selection`` (which inspects ``_render()``) would return
+        nothing for the same reason. We therefore reconstruct the selection
+        from the stored strips, treating ``None`` as "everything".
         """
+        from textual.geometry import Offset as _Offset
         from textual.selection import Selection
 
         screen = self.screen
@@ -685,11 +690,15 @@ class AgentTUI(App):
         selection = screen.selections.get(log) if screen.selections else None
         if selection is None or not isinstance(selection, Selection):
             return None
+        lines = log.lines
         start, end = selection.start, selection.end
+        if start is None:
+            start = _Offset(0, 0)
+        if end is None:
+            end = _Offset(len(lines), 1 << 30)
         # Normalise so start <= end.
         if (start[0], start[1]) > (end[0], end[1]):
             start, end = end, start
-        lines = log.lines
         out: list[str] = []
         for y in range(start[0], min(end[0], len(lines)) + 1):
             if y >= len(lines):
