@@ -39,12 +39,14 @@ agentknit-tui --no-strict-cache-proof
 | `Shift/Ctrl/Alt+Enter` | insert a newline              |
 | `↑` / `↓`            | recall past prompts (same folder, shared with the REPL) |
 | `Esc` / `Ctrl+C`     | cancel the running turn (or quit when idle) |
+| `Ctrl+Shift+C`       | copy the mouse selection in the log          |
 | `Ctrl+L`             | clear the on-screen conversation log only |
 
 ### Mouse
 
 - **Drag** over the conversation log selects text in place (highlighted as
-  you drag); `Ctrl+C` then copies the selection. `Esc` clears it.
+  you drag); `Ctrl+Shift+C` then copies the selection (plain `Ctrl+C` also
+  works when your terminal delivers it). `Esc` clears the selection.
 - Paste into the prompt with the terminal's own paste (`Ctrl+Shift+V`,
   `Shift+Insert`, or middle-click) — `Ctrl+V` inside the TUI only reads
   text copied *within* the TUI.

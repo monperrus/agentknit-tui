@@ -238,7 +238,7 @@ class AgentTUI(App):
     """
 
     BINDINGS = [
-        Binding("ctrl+c", "cancel_or_quit", "Cancel / Quit",
+        Binding("ctrl+c,ctrl+shift+c", "cancel_or_quit", "Cancel / Quit",
                 priority=True, show=False),
         Binding("escape", "maybe_cancel", "Cancel turn",
                 priority=True, show=False),
@@ -342,7 +342,7 @@ class AgentTUI(App):
             style="dim"))
         log.write(Text(
             "Enter submits · Shift/Ctrl/Alt+Enter newline · ↑/↓ history "
-            "· Esc cancels · Ctrl+C copies selection (or cancels) · /help · /exit",
+            "· Esc cancels · Ctrl+Shift+C copies selection (or cancels) · /help · /exit",
             style="dim italic"))
         log.write(Text(""))
 

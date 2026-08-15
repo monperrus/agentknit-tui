@@ -292,7 +292,7 @@ async def test_ctrl_c_copies_selection_instead_of_quitting(
         else:
             pytest.fail("expected row not found in conversation log")
         await pilot.pause()
-        await pilot.press("ctrl+c")
+        await pilot.press("ctrl+shift+c")
         await pilot.pause()
         assert app.clipboard == "Hello world"
         # App must still be running — the key copied instead of quitting.
@@ -356,7 +356,9 @@ async def test_drag_select_yields_character_range_and_copies(
             s.style for s in conv.render_line(wy)._segments if s.text.strip())
         assert sel_style.bgcolor is not None
         assert sel_style.color != sel_style.bgcolor
-        await pilot.press("ctrl+c")
+        # Ctrl+Shift+C is the copy chord (terminals reserve plain Ctrl+C's
+        # keycode differently; Shift+C is what reaches the app outside tmux).
+        await pilot.press("ctrl+shift+c")
         await pilot.pause()
         assert "Hello world" in app.clipboard  # the dragged span, not the log
         assert app.is_running
