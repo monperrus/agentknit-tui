@@ -63,7 +63,7 @@ from textual.message import Message
 from textual.reactive import reactive
 from textual.selection import Selection
 from textual.strip import Strip
-from textual.widgets import Footer, Header, Label, RichLog, TextArea
+from textual.widgets import Header, Label, RichLog, TextArea
 
 from ._history import PromptHistory
 
@@ -319,7 +319,6 @@ class AgentTUI(App):
                 yield self.PromptInput("", id="prompt", classes="PromptInput",
                                        soft_wrap=True)
             yield self.StatusBar(id="status")
-        yield Footer()
         # 50 ms timer to drain queued events from the worker thread.
         self.set_interval(0.05, self._drain_events)
 
