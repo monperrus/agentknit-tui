@@ -50,6 +50,17 @@ Slash commands (`/help`, `/usage`, `/clear`, `/compact`, `/model`, `/reset-conte
 are forwarded to agentknit's command registry; their printed output is
 captured and shown inline.
 
+On exit the TUI prints the command to resume the session on the console,
+exactly like the end of the agentknit REPL:
+
+```
+Resume: agentknit-tui glm-5.2 --session <session-id>
+```
+
+Set `AGENTKNIT_RESUME_COMMAND` to override the program prefix (wrappers
+embedding the model already do this); the `--session <id>` suffix is always
+appended.
+
 ## Design notes
 
 - The agent loop (`agentknit.run_turn`) is synchronous and blocking and
@@ -69,6 +80,11 @@ captured and shown inline.
   recalls instructions typed in either front-end, scoped to the folder they
   were typed in. `↑` on the first prompt line walks back, `↓` forward, and
   any edit drops back to normal typing.
+- On exit the TUI mirrors the REPL's teardown: the trajectory snapshot is
+  saved (if the session has any messages), a `session_end` record is
+  appended to the session log, and — after Textual restores the plain
+  console — the same dim `Resume: …` line the REPL prints is echoed so the
+  session can be continued with `--session <id>`.
 - agentknit installs a module-level SIGINT handler (meant for the
   foreground REPL) that kills the active tool subprocess. The TUI
   neutralises it for each turn's duration and drives cancellation through

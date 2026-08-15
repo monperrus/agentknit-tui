@@ -29,7 +29,9 @@ import io
 import os
 import queue
 import shlex
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import agentknit
@@ -40,6 +42,7 @@ from agentknit import (
     load_specification,
 )
 from agentknit import _core as _ak_core
+from agentknit._core import _build_resume_cmd
 from agentknit.slash_commands import REGISTRY as _slash_registry
 from rich.ansi import AnsiDecoder
 from rich.console import Group
@@ -84,6 +87,11 @@ _PASSTHROUGH_EVENTS = {
     "session_resumed",
     "token_limit",
 }
+
+# Executable names that take the model as a positional argument, so the
+# resume command must repeat it. Anything else (a wrapper script embedding
+# the model) resumes with just `--session <id>`.
+_TUI_CLI_NAMES = frozenset({"agentknit-tui"})
 
 
 # ── the app ───────────────────────────────────────────────────────────────────
@@ -191,6 +199,8 @@ class AgentTUI(App):
 
         self._client = create_client(schema)
         self._history = PromptHistory()
+        self._resume_hint_printed = False
+        self._ran_interactive = False
         self._session = init_session(
             schema,
             non_interactive=non_interactive,
@@ -571,6 +581,63 @@ class AgentTUI(App):
             self.action_maybe_cancel()
         else:
             self.exit()
+
+    def on_unmount(self) -> None:
+        """Teardown mirrored from the REPL's `_repl_teardown`.
+
+        Saves the resume snapshot and logs ``session_end``; the resume hint
+        itself is printed later, after Textual restored the plain console.
+        """
+        with contextlib.suppress(Exception):
+            _ak_core._save_messages_snapshot(self._session)
+        with contextlib.suppress(Exception):
+            _ak_core._log(self._session, {"type": "session_end",
+                                          "session_id": self._session.get("session_id"),
+                                          "reason": "tui_exit"})
+
+    def _resume_command(self) -> str:
+        """The command that resumes this session, like the REPL's hint.
+
+        Reuses agentknit's ``_build_resume_cmd`` so the
+        ``AGENTKNIT_RESUME_COMMAND`` override keeps working. The model
+        argument is included only when we were launched as the
+        ``agentknit-tui`` entry point (which takes one); wrapper scripts
+        embed the model already.
+        """
+        program = sys.argv[0] if sys.argv else ""
+        if not program or program in ("-", ""):
+            program = "agentknit-tui"  # e.g. run via `python -c` / embedders
+        include_model = Path(program).name in _TUI_CLI_NAMES
+        session_id = self._session.get("session_id") or ""
+        return _build_resume_cmd(self._model_name, session_id,
+                                 default_program=program,
+                                 include_model=include_model)
+
+    def _print_resume_hint(self) -> None:
+        """Echo the resume command on the plain console, like the REPL.
+
+        Called after :meth:`run`/:meth:`run_async` return — Textual has
+        already torn its driver down, so the line lands in the shell, right
+        below where the TUI was. Only printed once per process.
+        """
+        if self._resume_hint_printed:
+            return
+        self._resume_hint_printed = True
+        from agentknit._core import DIM, RESET
+
+        print(f"\n{DIM}Resume: {self._resume_command()}{RESET}", flush=True)
+
+    def run(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+        try:
+            return super().run(*args, **kwargs)
+        finally:
+            self._print_resume_hint()
+
+    async def run_async(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+        try:
+            return await super().run_async(*args, **kwargs)
+        finally:
+            self._print_resume_hint()
 
     def action_maybe_cancel(self) -> None:
         if self._cancel_token is not None and not self._cancel_token.cancelled:
