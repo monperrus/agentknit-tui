@@ -101,6 +101,9 @@ _PASSTHROUGH_EVENTS = {
 # the model) resumes with just `--session <id>`.
 _TUI_CLI_NAMES = frozenset({"agentknit-tui"})
 
+# Longest first-line excerpt of the running task shown in the status bar.
+_STATUS_TASK_MAX = 40
+
 
 # ── selectable conversation log ───────────────────────────────────────────────
 
@@ -284,6 +287,10 @@ class AgentTUI(App):
         self._decoder = AnsiDecoder()
         self._cancel_token: CancelToken | None = None
 
+        # The prompt of the turn currently running, shown in the status bar
+        # so the line under the input reminds what the agent is working on.
+        self._current_task: str = ""
+
         # Streaming buffers: deltas arrive one chunk at a time without newlines,
         # so we accumulate until the matching *_stream_end event flushes a line.
         self._content_buf: list[str] = []
@@ -316,8 +323,11 @@ class AgentTUI(App):
                                     wrap=True, auto_scroll=True,
                                     classes="conversation-log")
             with Vertical(id="prompt-row"):
-                yield self.PromptInput("", id="prompt", classes="PromptInput",
-                                       soft_wrap=True)
+                yield self.PromptInput(
+                    "", id="prompt", classes="PromptInput", soft_wrap=True,
+                    placeholder="task… (Enter submit · "
+                                "Shift/Ctrl/Alt+Enter newline)",
+                )
             yield self.StatusBar(id="status")
         # 50 ms timer to drain queued events from the worker thread.
         self.set_interval(0.05, self._drain_events)
@@ -488,7 +498,9 @@ class AgentTUI(App):
 
     def _end_turn_ui(self) -> None:
         self.busy = False
+        self._current_task = ""
         self._streamed_content = False
+        self._watch_current_task()
         self.query_one("#prompt", TextArea).focus()
         self.refresh()
 
@@ -655,7 +667,9 @@ class AgentTUI(App):
                 log.write(self._ansi(out) if "\033[" in out else Text(out, style="cyan"))
                 return
 
-        # Real turn.
+        # Real turn. `_current_task` first: watch_busy refreshes the status
+        # bar synchronously and must already see the running task.
+        self._current_task = text
         self.busy = True
         self._content_buf = []
         self._reasoning_buf = []
@@ -786,6 +800,10 @@ class AgentTUI(App):
         self._refresh_status()
         self.refresh()
 
+    def _watch_current_task(self) -> None:
+        """`_current_task` is plain state (not reactive); refresh when set."""
+        self._refresh_status()
+
     # ── status bar ────────────────────────────────────────────────────────────
 
     class StatusBar(Label):
@@ -837,6 +855,12 @@ class AgentTUI(App):
         if self.busy:
             parts.append(Text(" · ", style="dim"))
             parts.append(Text("working…", style="yellow"))
+            if self._current_task:
+                task = self._current_task.splitlines()[0]
+                if len(task) > _STATUS_TASK_MAX:
+                    task = task[:_STATUS_TASK_MAX - 1] + "…"
+                parts.append(Text(" · ", style="dim"))
+                parts.append(Text(task, style="italic"))
         return Text.assemble(*parts)
 
     def _refresh_status(self) -> None:

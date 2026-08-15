@@ -7,6 +7,7 @@ These exercise the TUI without any network or API key by stubbing
 
 from __future__ import annotations
 
+import time
 import types
 from typing import Any
 
@@ -85,7 +86,6 @@ async def _wait_for_log(
     `pilot.pause()` calls races it on slow machines. Poll instead.
     """
     import asyncio
-    import time
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -120,6 +120,7 @@ async def test_resume_session_survives_sync_event_from_init_session(
     `init_session`, i.e. while `AgentTUI.__init__` is still running. The
     event queue must therefore exist before `init_session` is called.
     """
+
     import agentknit_tui.app as appmod
     from agentknit_tui.app import AgentTUI
 
@@ -682,3 +683,70 @@ def test_capture_slash_returns_output(monkeypatch: pytest.MonkeyPatch) -> None:
     # Non-slash line is not handled.
     assert _capture_slash(REGISTRY, "hello", session, None, "x") is None
     _ = io  # silence linter about unused import intent
+
+
+@pytest.mark.asyncio
+async def test_status_bar_shows_running_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """While a turn runs, the line under the prompt names what it is doing."""
+    import agentknit_tui.app as appmod
+    from agentknit_tui.app import _STATUS_TASK_MAX, AgentTUI
+
+    seen: list[str] = []
+
+    def fake_turn(self: Any, task: str) -> None:
+        from agentknit_tui.app import _QueuedEvent
+        seen.append(task)
+        self._event_q.put(_QueuedEvent("final_answer", {"text": "done"}))
+        self._event_q.put(None)
+
+    _patch_no_network(monkeypatch)
+    monkeypatch.setattr(appmod.AgentTUI, "_run_turn", fake_turn)
+
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        ta = app.query_one("#prompt")
+        ta.focus()
+        await pilot.pause()
+        ta.load_text("fix the failing login test")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        def status_plain() -> str:
+            content = app.query_one("#status").content
+            return content.plain if hasattr(content, "plain") else str(content)
+
+        # Submitting recorded the task for the status line while busy…
+        assert seen == ["fix the failing login test"]
+        app.busy = True
+        app._current_task = "fix the failing login test"
+        app._watch_current_task()
+        assert "working" in status_plain()
+        assert "fix the failing login test" in status_plain()
+
+        # Long tasks are truncated to one line with an ellipsis.
+        long_task = "x" * 200
+        app._current_task = long_task
+        app._watch_current_task()
+        shown = status_plain()
+        assert long_task not in shown
+        assert "x" * (_STATUS_TASK_MAX - 1) + "…" in shown
+        assert "\n" not in shown
+
+        # A multiline task shows only its first line.
+        app._current_task = "first line\nsecond line"
+        app._watch_current_task()
+        shown = status_plain()
+        assert "first line" in shown
+        assert "second line" not in shown
+
+        # After the turn ends, the status line drops the task again.
+        await _wait_for_log(app, lambda t: "done" in t)
+        app.busy = False
+        assert "first line" not in status_plain()
+        assert "working" not in status_plain()
+        app.exit()
+

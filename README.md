@@ -57,6 +57,12 @@ agentknit-tui --no-strict-cache-proof
 
 `Ctrl+L` (and the TUI's built-in `/clear` alias) wipes the displayed log;
 the agent's message history — the context sent to the model — is untouched.
+
+### Status bar
+
+The line under the prompt shows the model, session id, token usage, and —
+while a turn is running — a one-line excerpt of the task the agent is
+working on, so a scrolled-away log never loses track of it.
 To reset the LLM context (session history, keeping the system prompt), run
 `/reset-context` in the TUI; it forwards to agentknit's `/clear` handler.
 

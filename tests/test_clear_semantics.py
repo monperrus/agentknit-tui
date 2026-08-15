@@ -11,7 +11,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-
 from test_tui import _log_text, _make_schema, _patch_no_network, _wait_for_log
 
 
