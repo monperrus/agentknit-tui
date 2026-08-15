@@ -49,6 +49,7 @@ from rich.console import Group
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.segment import Segment
+from rich.style import Style
 from rich.text import Text
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -148,10 +149,14 @@ class SelectableRichLog(RichLog):
         # Rich style addition lets the right-hand operand win, so plain
         # apply_style(sel_style) leaves the segment's own background in
         # place (style + segment_style). Compose the other way round to
-        # make the selection background visible on already-styled text.
+        # make the selection background visible on already-styled text —
+        # but drop the selection style's *foreground*, which the theme
+        # leaves as an alpha-0 color that renders as the background
+        # itself (fg == bg ⇒ invisible text under selection).
         sel_style = self.screen.get_component_rich_style("screen--selection")
+        bg_only = Style(bgcolor=sel_style.bgcolor, reverse=False)
         sel = Strip(
-            [Segment(seg.text, seg.style + sel_style if seg.style else sel_style)
+            [Segment(seg.text, seg.style + bg_only if seg.style else bg_only)
              for seg in sel._segments],
             sel.cell_length,
         )

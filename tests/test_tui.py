@@ -350,6 +350,12 @@ async def test_drag_select_yields_character_range_and_copies(
         assert selection is not None
         assert selection.start is not None and selection.end is not None
         assert selection != Selection(None, None)  # character range, not all
+        # The dragged span must be highlighted but keep its own foreground
+        # (fg == selection bg would render the text invisible).
+        sel_style = next(
+            s.style for s in conv.render_line(wy)._segments if s.text.strip())
+        assert sel_style.bgcolor is not None
+        assert sel_style.color != sel_style.bgcolor
         await pilot.press("ctrl+c")
         await pilot.pause()
         assert "Hello world" in app.clipboard  # the dragged span, not the log
