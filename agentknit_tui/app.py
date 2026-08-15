@@ -45,6 +45,7 @@ from agentknit import (
 )
 from agentknit import _core as _ak_core
 from agentknit._core import _build_resume_cmd
+from agentknit.exceptions import RateLimitError
 from agentknit.slash_commands import REGISTRY as _slash_registry
 from rich.ansi import AnsiDecoder
 from rich.console import Group
@@ -374,6 +375,12 @@ class AgentTUI(App):
             except KeyboardInterrupt:
                 # Cancellation or a real interrupt — surface a notice.
                 self._event_q.put(_QueuedEvent("interrupted", {}))
+            except RateLimitError as exc:
+                # No retry-after info was given — the engine already stopped
+                # the loop instead of guessing a delay. Surface it plainly.
+                self._event_q.put(_QueuedEvent(
+                    "error", {"text": f"Rate limited: {exc}",
+                              "fmt": f"\033[31mRate limited: {exc}\033[0m"}))
             except Exception as exc:  # noqa: BLE001 — engine surfaces its own errors too
                 self._event_q.put(_QueuedEvent(
                     "error", {"text": str(exc),

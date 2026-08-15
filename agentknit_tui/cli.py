@@ -26,6 +26,7 @@ from agentknit.exceptions import (
     AgentSpecInvalidError,
     AuthenticationError,
     PricingLimitExceededError,
+    RateLimitError,
 )
 
 from .app import AgentTUI, build_schema_from_argv
@@ -48,6 +49,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     except AuthenticationError as exc:
         print(f"Authentication error: {exc}", file=sys.stderr)
+        return 2
+    except RateLimitError as exc:
+        print(f"Rate limited: {exc}", file=sys.stderr)
         return 2
 
     cache_key = kwargs.pop("cache_key", None)
