@@ -278,12 +278,15 @@ async def test_ctrl_c_copies_selection_instead_of_quitting(
         conv.write("Hello world copy me")
         await pilot.pause()
         # Find the rendered row and select "Hello world" within it.
+        from textual.geometry import Offset
+
         for y, strip in enumerate(conv.lines):
-            row = "".join(seg.text for seg in strip)
+            row = strip.text
             if "Hello world" in row:
                 col = row.index("Hello")
                 app.screen.selections = {
-                    conv: Selection((y, col), (y, col + len("Hello world")))
+                    conv: Selection(Offset(col, y),
+                                    Offset(col + len("Hello world"), y))
                 }
                 break
         else:
@@ -298,15 +301,15 @@ async def test_ctrl_c_copies_selection_instead_of_quitting(
 
 
 @pytest.mark.asyncio
-async def test_ctrl_c_copies_whole_log_when_drag_yields_select_all(
+async def test_drag_select_yields_character_range_and_copies(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A real drag over the RichLog yields SELECT_ALL, not character offsets.
+    """A plain drag over the conversation log selects exact characters.
 
-    RichLog renders line strips without per-cell ``offset`` style metadata,
-    so Textual's compositor cannot map the drag to a character range and
-    falls back to ``Selection(None, None)`` (select-all). The app must copy
-    the visible log in that case instead of raising TypeError.
+    The log subclass tags strips with offset metadata, so the compositor can
+    map the drag to character offsets: the selection must be a real range
+    (not SELECT_ALL), must highlight while dragging, and Ctrl+C must copy
+    exactly the dragged span.
     """
     from textual import events
     from textual.selection import Selection
@@ -321,23 +324,35 @@ async def test_ctrl_c_copies_whole_log_when_drag_yields_select_all(
         conv = app.query_one("#conversation")
         conv.write("Hello world copy me")
         await pilot.pause()
-        # Simulate a real drag through the driver so the selection goes
-        # through Screen's select machinery, exactly as a terminal drag does.
-        await pilot.mouse_down(conv, offset=(2, 4))
-        for x in range(3, 12):
+        # Locate the rendered row and drag across "Hello world" in it.
+        # Drag coordinates are screen-space: the log's content starts at
+        # content_region (border + padding shift it), and strip index wy is
+        # relative to the scroll position.
+        for wy, strip in enumerate(conv.lines):
+            if "Hello world" in strip.text:
+                col = strip.text.index("Hello")
+                break
+        else:
+            pytest.fail("expected row not found in conversation log")
+        cr = conv.content_region
+        sy = cr.y + wy - conv.scroll_offset.y
+        sx = cr.x + col - conv.scroll_offset.x
+        await pilot.mouse_down(None, offset=(sx, sy))
+        for x in range(sx + 1, sx + len("Hello world")):
             app._driver.process_message(
-                events.MouseMove(widget=app.screen, x=x, y=4,
+                events.MouseMove(widget=app.screen, x=x, y=sy,
                                  delta_x=1, delta_y=0, button=0,
                                  shift=False, meta=False, ctrl=False))
         await pilot.pause()
-        await pilot.mouse_up(conv, offset=(11, 4))
+        await pilot.mouse_up(None, offset=(sx + len("Hello world") - 1, sy))
         await pilot.pause()
         selection = app.screen.selections.get(conv)
         assert selection is not None
-        assert selection == Selection(None, None)  # SELECT_ALL, not offsets
+        assert selection.start is not None and selection.end is not None
+        assert selection != Selection(None, None)  # character range, not all
         await pilot.press("ctrl+c")
         await pilot.pause()
-        assert "Hello world copy me" in app.clipboard
+        assert "Hello world" in app.clipboard  # the dragged span, not the log
         assert app.is_running
         app.exit()
 

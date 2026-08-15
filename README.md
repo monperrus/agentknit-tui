@@ -41,6 +41,17 @@ agentknit-tui --no-strict-cache-proof
 | `Esc` / `Ctrl+C`     | cancel the running turn (or quit when idle) |
 | `Ctrl+L`             | clear the on-screen conversation log only |
 
+### Mouse
+
+- **Drag** over the conversation log selects text in place (highlighted as
+  you drag); `Ctrl+C` then copies the selection. `Esc` clears it.
+- Paste into the prompt with the terminal's own paste (`Ctrl+Shift+V`,
+  `Shift+Insert`, or middle-click) — `Ctrl+V` inside the TUI only reads
+  text copied *within* the TUI.
+- Copies travel via OSC 52; inside tmux use `set -s set-clipboard on` and
+  an OSC-52-capable outer terminal (kitty, alacritty, wezterm, iTerm2…).
+  `Shift+drag` always falls back to the terminal's native selection.
+
 `Ctrl+L` (and the TUI's built-in `/clear` alias) wipes the displayed log;
 the agent's message history — the context sent to the model — is untouched.
 To reset the LLM context (session history, keeping the system prompt), run

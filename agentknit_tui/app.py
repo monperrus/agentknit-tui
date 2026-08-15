@@ -48,13 +48,17 @@ from rich.ansi import AnsiDecoder
 from rich.console import Group
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.segment import Segment
 from rich.text import Text
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
+from textual.geometry import Offset
 from textual.message import Message
 from textual.reactive import reactive
+from textual.selection import Selection
+from textual.strip import Strip
 from textual.widgets import Footer, Header, Label, RichLog, TextArea
 
 from ._history import PromptHistory
@@ -92,6 +96,89 @@ _PASSTHROUGH_EVENTS = {
 # resume command must repeat it. Anything else (a wrapper script embedding
 # the model) resumes with just `--session <id>`.
 _TUI_CLI_NAMES = frozenset({"agentknit-tui"})
+
+
+# ── selectable conversation log ───────────────────────────────────────────────
+
+
+class SelectableRichLog(RichLog):
+    """A ``RichLog`` that supports character-accurate mouse drag selection.
+
+    Stock ``RichLog`` renders strips without the per-cell ``offset`` style
+    metadata Textual's compositor uses to map a mouse position to a
+    character offset (``Log`` has it via ``Strip.apply_offsets``;
+    ``RichLog`` does not). The result: any drag over the log degenerates to
+    SELECT_ALL and no highlight is drawn, because the selection machinery
+    cannot resolve where the selection starts or ends.
+
+    Two overrides fix that:
+
+    * ``render_line`` tags every strip with its (x, y) offset, so a drag
+      produces a ``Selection`` with real character offsets and Textual
+      highlights the selected span as you drag.
+    * ``get_selection`` extracts the text from the stored strips, since the
+      base ``Widget.get_selection`` inspects ``_render()``, which for a
+      multi-line log is not the text either.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+
+    def render_line(self, y: int) -> Strip:
+        scroll_x, scroll_y = self.scroll_offset
+        base = super().render_line(y).apply_offsets(scroll_x, scroll_y + y)
+        selection = self.text_selection
+        if selection is None:
+            return base
+        # While a selection is active, stylize the selected span directly
+        # (offset metadata alone does not repaint with the selection style).
+        span = selection.get_span(scroll_y + y)
+        if span is None:
+            return base
+        start, end = span
+        if end == -1:
+            end = base.cell_length
+        # Strip.divide drops cuts beyond the cell length, so the number of
+        # parts varies; pad to exactly three (head, selection, tail).
+        cuts = [max(0, start), max(start, end)]
+        parts = list(base.divide(cuts))
+        while len(parts) < 3:
+            parts.append(Strip([], 0))
+        head, sel, tail = parts[0], parts[1], Strip.join(parts[2:])
+        # Rich style addition lets the right-hand operand win, so plain
+        # apply_style(sel_style) leaves the segment's own background in
+        # place (style + segment_style). Compose the other way round to
+        # make the selection background visible on already-styled text.
+        sel_style = self.screen.get_component_rich_style("screen--selection")
+        sel = Strip(
+            [Segment(seg.text, seg.style + sel_style if seg.style else sel_style)
+             for seg in sel._segments],
+            sel.cell_length,
+        )
+        return Strip.join([head, sel, tail])
+
+    def get_selection(self, selection: Selection) -> tuple[str, str] | None:
+        lines = self.lines
+        start, end = selection
+        if start is None and end is None:
+            return "\n".join(strip.text for strip in lines), "\n"
+        if start is None:
+            start = Offset(0, 0)
+        if end is None:
+            end = Offset(len(lines), 1 << 30)
+        if (start.y, start.x) > (end.y, end.x):
+            start, end = end, start
+        out: list[str] = []
+        for y in range(start.y, min(end.y, len(lines) - 1) + 1):
+            text = lines[y].text
+            if y == start.y and y == end.y:
+                text = text[start.x:end.x]
+            elif y == start.y:
+                text = text[start.x:]
+            elif y == end.y:
+                text = text[:end.x]
+            out.append(text)
+        return "\n".join(out), "\n"
 
 
 # ── the app ───────────────────────────────────────────────────────────────────
@@ -217,8 +304,9 @@ class AgentTUI(App):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         with Vertical():
-            yield RichLog(id="conversation", highlight=False, markup=False,
-                          wrap=True, auto_scroll=True, classes="conversation-log")
+            yield SelectableRichLog(id="conversation", highlight=False, markup=False,
+                                    wrap=True, auto_scroll=True,
+                                    classes="conversation-log")
             with Vertical(id="prompt-row"):
                 yield self.PromptInput("", id="prompt", classes="PromptInput",
                                        soft_wrap=True)
@@ -234,7 +322,7 @@ class AgentTUI(App):
         self.model = self._model_name
         self.session_id = self._session.get("session_id", "…")
 
-        log = self.query_one("#conversation", RichLog)
+        log = self.query_one("#conversation", SelectableRichLog)
         log.write(self._header_panel())
 
         tool_names = [
@@ -297,7 +385,7 @@ class AgentTUI(App):
         """Render queued events until the turn sentinel is seen."""
         if self._event_q.empty():
             return
-        log = self.query_one("#conversation", RichLog)
+        log = self.query_one("#conversation", SelectableRichLog)
         saw_sentinel = False
         while True:
             try:
@@ -523,7 +611,7 @@ class AgentTUI(App):
         prompt.reset_history_browsing()
         prompt.load_text("")
 
-        log = self.query_one("#conversation", RichLog)
+        log = self.query_one("#conversation", SelectableRichLog)
         log.write(self._render_user(text))
 
         # Persist for arrow-up recall in this folder (shared with the REPL).
@@ -642,11 +730,11 @@ class AgentTUI(App):
     def action_maybe_cancel(self) -> None:
         if self._cancel_token is not None and not self._cancel_token.cancelled:
             self._cancel_token.cancel()
-            self.query_one("#conversation", RichLog).write(
+            self.query_one("#conversation", SelectableRichLog).write(
                 Text("[cancelling…]", style="yellow"))
 
     def action_clear_log(self) -> None:
-        log = self.query_one("#conversation", RichLog)
+        log = self.query_one("#conversation", SelectableRichLog)
         log.clear()
         log.write(self._header_panel())
 
@@ -669,50 +757,32 @@ class AgentTUI(App):
         """
 
     def _conversation_log(self) -> RichLog:
-        return self.query_one("#conversation", RichLog)
+        return self.query_one("#conversation", SelectableRichLog)
 
     def _selected_text(self) -> str | None:
         """Text currently selected in the conversation log, if any.
 
-        Textual's ``RichLog`` renders line strips without per-cell ``offset``
-        style metadata (unlike ``Log``, which calls ``Strip.apply_offsets``),
-        so the compositor cannot map a drag to character offsets and falls
-        back to ``SELECT_ALL`` — ``Selection(None, None)``. The default
-        ``Widget.get_selection`` (which inspects ``_render()``) would return
-        nothing for the same reason. We therefore reconstruct the selection
-        from the stored strips, treating ``None`` as "everything".
+        Delegates to the log's own ``get_selection`` (see
+        :class:`SelectableRichLog`), which extracts the span from the stored
+        strips. Any widget in the screen may hold a selection (e.g. the
+        prompt's own TextArea), so consult all of them, but only copy from
+        selectable-text widgets — a TextArea copies itself via its own
+        Ctrl+C binding before this fallback runs.
         """
-        from textual.geometry import Offset as _Offset
-        from textual.selection import Selection
-
         screen = self.screen
-        log = self._conversation_log()
-        selection = screen.selections.get(log) if screen.selections else None
-        if selection is None or not isinstance(selection, Selection):
+        if not screen.selections:
             return None
-        lines = log.lines
-        start, end = selection.start, selection.end
-        if start is None:
-            start = _Offset(0, 0)
-        if end is None:
-            end = _Offset(len(lines), 1 << 30)
-        # Normalise so start <= end.
-        if (start[0], start[1]) > (end[0], end[1]):
-            start, end = end, start
-        out: list[str] = []
-        for y in range(start[0], min(end[0], len(lines)) + 1):
-            if y >= len(lines):
-                break
-            row = "".join(seg.text for seg in lines[y])
-            if y == start[0] and y == end[0]:
-                row = row[start[1]:end[1]]
-            elif y == start[0]:
-                row = row[start[1]:]
-            elif y == end[0]:
-                row = row[:end[1]]
-            out.append(row)
-        text = "\n".join(out).strip()
-        return text or None
+        chunks: list[str] = []
+        for widget, selection in screen.selections.items():
+            if not widget.is_attached:
+                continue
+            text = widget.get_selection(selection)
+            if text is None:
+                continue
+            extracted, _sep = text
+            if extracted.strip():
+                chunks.append(extracted.rstrip("\n"))
+        return "\n".join(chunks) or None
 
     def _status_text(self) -> Text:
         parts = [Text(self.model, style="bold")]
