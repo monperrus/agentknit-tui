@@ -5,6 +5,7 @@ Usage mirrors the ``agent-glm-5.2.py`` wrappers it replaces:
     agentknit-tui                       # default glm-5.2 via z.ai
     agentknit-tui glm-5.2               # explicit model, default endpoint
     agentknit-tui "qwen3-8b" "https://openrouter.ai/api/v1"
+    agentknit-tui "<task>"              # prefill the prompt with the task
     agentknit-tui --session <id>        # resume a previous trajectory
     agentknit-tui --non-interactive     # drop ask_user* tools from the schema
 
@@ -35,6 +36,8 @@ from .app import AgentTUI, build_schema_from_argv
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     schema, kwargs = build_schema_from_argv(argv)
+    cache_key = kwargs.pop("cache_key", None)
+    prefill = kwargs.pop("prefill", "")
     try:
         validate_schema(schema)
         agentknit.check_and_display_pricing(schema)
@@ -55,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     cache_key = kwargs.pop("cache_key", None)
-    app = AgentTUI(schema, **kwargs)
+    app = AgentTUI(schema, prefill=prefill, **kwargs)
     if cache_key:
         # init_session already ran inside __init__; honour an explicit cache
         # key by overriding the session's cache_key before the first turn.

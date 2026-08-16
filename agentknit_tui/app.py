@@ -271,6 +271,7 @@ class AgentTUI(App):
         system_prompt_supplement: str = "",
         max_output_tokens: int | None = None,
         strict_cache_proof: bool = True,
+        prefill: str = "",
     ) -> None:
         super().__init__()
         self._schema = schema
@@ -279,6 +280,7 @@ class AgentTUI(App):
         self._supplement = system_prompt_supplement
         self._max_output_tokens = max_output_tokens
         self._strict_cache_proof = strict_cache_proof
+        self._prefill = prefill
 
         # Event plumbing — must exist *before* init_session: resuming a
         # session (--session <id>) emits `session_resumed` synchronously from
@@ -359,7 +361,13 @@ class AgentTUI(App):
         log.write(Text(""))
 
         self.query_one("#prompt", AgentTUI.PromptInput).attach_history(self._history)
-        self.query_one("#prompt", TextArea).focus()
+        prompt = self.query_one("#prompt", TextArea)
+        if self._prefill:
+            # One-shot task passed on the CLI: land it in the prompt for the
+            # user to review, not straight into the model.
+            prompt.load_text(self._prefill)
+            prompt.cursor_location = (0, len(self._prefill))
+        prompt.focus()
 
     # ── agentknit event subscription (runs on the worker thread) ──────────────
 
@@ -1089,8 +1097,19 @@ def build_schema_from_argv(argv: list[str]) -> tuple[dict, dict]:
     # matching the agent-glm-5.2.py wrapper that motivated this TUI.
     model = "glm-5.2"
     endpoint = "https://api.z.ai/api/coding/paas/v4"
-    if positional and "/" in positional[0]:
-        model, _, endpoint = positional[0].partition(" ")
+    prefill = ""
+    if positional:
+        model, endpoint_arg = _split_model_endpoint(positional[0])
+        if endpoint_arg:
+            endpoint = endpoint_arg
+        elif len(positional) >= 2 and _looks_like_endpoint(positional[1]):
+            # Two-arg form: `agentknit-tui <model> <endpoint>`
+            endpoint = positional[1]
+        else:
+            # Not a "model endpoint" pair: the positionals are the task to
+            # prefill (agent-glm wrapper semantics), model stays the default.
+            model = "glm-5.2"
+            prefill = " ".join(positional)
     schema = load_specification(model, endpoint)
 
     # Inject keyring config for z.ai when using the default spec, mirroring
@@ -1115,6 +1134,7 @@ def build_schema_from_argv(argv: list[str]) -> tuple[dict, dict]:
         max_output_tokens=max_tokens,
         strict_cache_proof=strict,
         cache_key=cache_key,
+        prefill=prefill,
     )
     return schema, kwargs
 
@@ -1138,3 +1158,8 @@ def _split_model_endpoint(arg: str) -> tuple[str, str]:
     if len(parts) >= 2:
         return parts[0], parts[1]
     return arg, ""
+
+
+def _looks_like_endpoint(arg: str) -> bool:
+    """True when *arg* is clearly an URL, not a task word."""
+    return arg.startswith(("http://", "https://", "run://"))
