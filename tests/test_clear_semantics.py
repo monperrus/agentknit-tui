@@ -60,6 +60,43 @@ async def test_slash_clear_wipes_log_not_context(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.asyncio
+async def test_slash_clear_resets_status_bar_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The status-bar counters mirror what's on screen; /clear zeroes them.
+
+    The session's usage_totals (what /usage reports) must survive — only the
+    on-screen counters reset, and the next usage event re-syncs them.
+    """
+    from agentknit_tui.app import _QueuedEvent
+
+    app = await _boot(monkeypatch)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app._event_q.put(_QueuedEvent("usage", {
+            "prompt": 1200, "completion": 300, "total": 1500, "cached": 800,
+        }))
+        app._event_q.put(None)
+        await _wait_for_log(
+            app, lambda t: "1,500" in app.query_one("#status").content.plain)
+        app._session["usage_totals"] = {
+            "prompt": 1200, "completion": 300, "total": 1500, "cached": 800,
+        }
+
+        await _submit(app, pilot, "/clear")
+        await pilot.pause()
+
+        assert app.prompt_tokens == 0
+        assert app.completion_tokens == 0
+        assert app.cached_tokens == 0
+        assert "tokens" not in app.query_one("#status").content.plain
+        # Session totals untouched.
+        assert app._session["usage_totals"]["total"] == 1500
+        app.exit()
+
+
+@pytest.mark.asyncio
 async def test_reset_context_clears_llm_history(monkeypatch: pytest.MonkeyPatch) -> None:
     app = await _boot(monkeypatch)
 

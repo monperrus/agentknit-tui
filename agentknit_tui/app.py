@@ -656,7 +656,10 @@ class AgentTUI(App):
             return
         if lowered == "/clear":
             # The TUI intercepts /clear: wipe the displayed log only. The
-            # agent's message history (LLM context) is untouched.
+            # agent's message history (LLM context) is untouched, but the
+            # status bar counters go with the visible log — users read them
+            # as "tokens of what's on screen".
+            self._reset_usage_status()
             log.clear()
             log.write(self._header_panel())
             return
@@ -796,9 +799,23 @@ class AgentTUI(App):
                 Text("[cancelling…]", style="yellow"))
 
     def action_clear_log(self) -> None:
+        self._reset_usage_status()
         log = self.query_one("#conversation", SelectableRichLog)
         log.clear()
         log.write(self._header_panel())
+
+    def _reset_usage_status(self) -> None:
+        """Zero the token counters shown in the status bar.
+
+        Called when the visible log is wiped (``/clear``, ``Ctrl+L``): the
+        counters are read as tokens of the conversation on screen. The
+        session's own ``usage_totals`` (what ``/usage`` and the trajectory
+        journal report) are untouched; the next ``usage`` event re-syncs the
+        status bar from the session.
+        """
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
+        self.cached_tokens = 0
 
     # ── status bar / watchers ─────────────────────────────────────────────────
 

@@ -58,8 +58,10 @@ agentknit-tui --no-strict-cache-proof
   the Rich panel chrome first, so the clipboard gets the payload text — no
   leading `│` gutter, no border rows.
 
-`Ctrl+L` (and the TUI's built-in `/clear` alias) wipes the displayed log;
-the agent's message history — the context sent to the model — is untouched.
+`Ctrl+L` (and the TUI's built-in `/clear` alias) wipes the displayed log
+and zeroes the token counters in the status bar; the agent's message
+history — the context sent to the model — is untouched, and `/usage`
+still reports the session's full totals.
 
 ### Status bar
 
