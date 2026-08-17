@@ -54,6 +54,9 @@ agentknit-tui --no-strict-cache-proof
   `pbcopy`, `clip.exe`) and also emits OSC 52; one of the two reaches the
   system clipboard even in VTE terminals that ignore OSC 52 (Terminator,
   older gnome-terminal).
+- Copying out of a bordered block (your prompt, replies, tool output) strips
+  the Rich panel chrome first, so the clipboard gets the payload text — no
+  leading `│` gutter, no border rows.
 
 `Ctrl+L` (and the TUI's built-in `/clear` alias) wipes the displayed log;
 the agent's message history — the context sent to the model — is untouched.

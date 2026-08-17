@@ -189,7 +189,7 @@ class SelectableRichLog(RichLog):
             elif y == end.y:
                 text = text[:end.x]
             out.append(text)
-        return "\n".join(out), "\n"
+        return "\n".join(_strip_panel_chrome(out)), "\n"
 
 
 # ── the app ───────────────────────────────────────────────────────────────────
@@ -997,6 +997,46 @@ def _session_log_path(session: dict) -> str:
         return str(session.get("log_path") or "—")
     except Exception:  # noqa: BLE001
         return "—"
+
+
+# Vertical panel border characters, as rendered by Rich's box drawing.
+_PANEL_VBORDERS = "│┃║"
+
+
+def _strip_panel_chrome(lines: list[str]) -> list[str]:
+    """Drop Rich panel borders/padding from copied selection lines.
+
+    Copying a panel whose content wraps (long tasks, wide tool output)
+    prefix-eats the ``│`` gutter on every middle row. Detect a bordered
+    block and keep only the inner text so the clipboard gets the payload.
+    """
+    if not lines:
+        return lines
+    body = [ln.rstrip() for ln in lines]
+    if len(body) < 2:
+        return body
+    first = body[0].lstrip()
+    top_border = first.startswith("╭─") or first.startswith("┌─")
+    if not top_border and body[0][:1] not in _PANEL_VBORDERS:
+        return body  # not a bordered block
+    last = body[-1].lstrip()
+    bottom_border = last[:1] in "╰└"
+    if not bottom_border and not (top_border or body[0][:1] in _PANEL_VBORDERS):
+        return body
+
+    def _inner(ln: str) -> str:
+        if ln[:1] in _PANEL_VBORDERS + "┌└":
+            ln = ln[1:]
+        if ln[:1] == " ":
+            ln = ln[1:]
+        return ln.rstrip(" │┃║╮╯┐┘").rstrip()
+
+    out = []
+    for ln in body:
+        if ln.lstrip()[:1] in "╭╰┌└":
+            continue  # border row (top/bottom edge, with any title)
+        out.append(_inner(ln))
+    return out
 
 
 def _capture_slash(registry: Any, line: str, session: dict, client: Any,
