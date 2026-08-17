@@ -18,8 +18,14 @@ def _make_schema() -> dict:
 
 
 def _patch_no_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Neutralise the environment and the network for resume-hint checks.
+
+    ``AGENTKNIT_RESUME_COMMAND`` (exported by Martin's shell for wrapper
+    scripts) would override the program under test, so scrub it.
+    """
     import agentknit_tui.app as appmod
 
+    monkeypatch.delenv("AGENTKNIT_RESUME_COMMAND", raising=False)
     monkeypatch.setattr(
         appmod,
         "create_client",
