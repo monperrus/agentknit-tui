@@ -28,7 +28,9 @@ def _messages(app: Any) -> list[dict]:
 
 
 async def _submit(app: Any, pilot: Any, text: str) -> None:
-    ta = app.query_one("#prompt")
+    from agentknit_tui.app import AgentTUI
+
+    ta = app.query_one("#prompt", AgentTUI.PromptInput)
     ta.focus()
     await pilot.pause()
     ta.load_text(text)

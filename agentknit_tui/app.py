@@ -492,6 +492,23 @@ class AgentTUI(App):
             log.write(Text("[interrupted]", style="yellow"))
             return
 
+        if et == "rate_limit_wait":
+            # agentknit emits this before sleeping after a retryable HTTP 429.
+            # It is a state transition, not an error: keep the running turn
+            # active, but make the otherwise silent wait visible in the log.
+            if fmt:
+                log.write(self._ansi(fmt))
+            else:
+                delay = data.get("delay")
+                resume_at = data.get("resume_at")
+                message = "Rate limited — waiting for the provider limit to reset"
+                if delay is not None:
+                    message += f" ({float(delay):.1f}s)"
+                if resume_at:
+                    message += f"; resuming at {resume_at}"
+                log.write(Text(message, style="yellow"))
+            return
+
         if et == "error":
             if fmt:
                 log.write(self._ansi(fmt))

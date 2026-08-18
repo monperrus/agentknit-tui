@@ -48,7 +48,7 @@ async def test_prefill_lands_in_prompt_not_the_model(monkeypatch) -> None:
                    prefill="fix the bug in foo.py")
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        prompt = app.query_one("#prompt")
+        prompt = app.query_one("#prompt", AgentTUI.PromptInput)
         assert prompt.text == "fix the bug in foo.py"
         assert submitted == []          # nothing sent yet
         await pilot.press("enter")
@@ -65,7 +65,7 @@ async def test_no_prefill_leaves_prompt_empty(monkeypatch) -> None:
     app = AgentTUI(_make_schema(), non_interactive=True)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        assert app.query_one("#prompt").text == ""
+        assert app.query_one("#prompt", AgentTUI.PromptInput).text == ""
         app.exit()
 
 

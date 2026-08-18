@@ -24,7 +24,7 @@ def _panel_lines(width: int = 60) -> list[str]:
              "put on an A4 paper and ocr"),
         border_style="green", title="you", title_align="left", padding=(0, 1),
     ))
-    return console.file.getvalue().splitlines()
+    return console.file.getvalue().splitlines()  # type: ignore[attr-defined]
 
 
 def test_full_panel_copy_strips_borders_and_gutter() -> None:

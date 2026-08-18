@@ -13,6 +13,8 @@ from typing import Any
 
 import pytest
 
+from agentknit_tui.app import SelectableRichLog
+
 # pytest-asyncio (declared in [project.optional-dependencies].test) drives the
 # async TUI tests; `asyncio_mode = "auto"` in pyproject marks every async
 # test function automatically.
@@ -162,7 +164,7 @@ async def test_enter_submits_and_renders_turn(monkeypatch: pytest.MonkeyPatch) -
 
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        ta = app.query_one("#prompt")
+        ta = app.query_one("#prompt", AgentTUI.PromptInput)
         ta.focus()
         await pilot.pause()
         ta.load_text("hi")
@@ -187,7 +189,7 @@ async def test_mod_enter_inserts_newline(monkeypatch: pytest.MonkeyPatch) -> Non
 
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        ta = app.query_one("#prompt")
+        ta = app.query_one("#prompt", AgentTUI.PromptInput)
         ta.focus()
         await pilot.pause()
         # Type characters so the cursor sits at the end before the chord.
@@ -246,18 +248,46 @@ async def test_usage_goes_to_status_bar_not_log(
             "fmt": "\033[35m[session tokens] prompt 1,200\033[0m",
         }))
         app._event_q.put(None)
-        await _wait_for_log(app, lambda t: "1,500" in app.query_one("#status").content.plain)
+        status_bar = app.query_one("#status", AgentTUI.StatusBar)
+        await _wait_for_log(
+            app, lambda t: "1,500" in str(getattr(status_bar.content, "plain", status_bar.content)))
         log_text = _log_text(app)
         # No token line leaks into the conversation log.
         assert "[tokens]" not in log_text
         assert "[session tokens]" not in log_text
         # The status bar reflects the totals.
-        status = app.query_one("#status")
+        status = app.query_one("#status", AgentTUI.StatusBar)
         content = status.content
         status_plain = content.plain if hasattr(content, "plain") else str(content)
         assert "1,500" in status_plain
         assert "800" in status_plain
         assert "cached" in status_plain
+        app.exit()
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_wait_is_shown_in_conversation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A retryable 429 must remain visible while agentknit sleeps."""
+    from agentknit_tui.app import AgentTUI, _QueuedEvent
+
+    _patch_no_network(monkeypatch)
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app._event_q.put(_QueuedEvent("rate_limit_wait", {
+            "delay": 90,
+            "resume_at": "2026-08-18T15:30:00+02:00",
+            "fmt": ("  [rate-limited] waiting 90.0s "
+                    "(resuming at 15:30:00 CEST) …"),
+        }))
+        await _wait_for_log(app, lambda t: "[rate-limited] waiting 90.0s" in t)
+        text = _log_text(app)
+        assert "[rate-limited] waiting 90.0s" in text
+        assert "resuming at" in text
+        assert "15:30:00 CEST" in text
         app.exit()
 
 
@@ -275,7 +305,7 @@ async def test_ctrl_c_copies_selection_instead_of_quitting(
 
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        conv = app.query_one("#conversation")
+        conv = app.query_one("#conversation", SelectableRichLog)
         conv.write("Hello world copy me")
         await pilot.pause()
         # Find the rendered row and select "Hello world" within it.
@@ -322,7 +352,7 @@ async def test_drag_select_yields_character_range_and_copies(
 
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        conv = app.query_one("#conversation")
+        conv = app.query_one("#conversation", SelectableRichLog)
         conv.write("Hello world copy me")
         await pilot.pause()
         # Locate the rendered row and drag across "Hello world" in it.
@@ -338,6 +368,7 @@ async def test_drag_select_yields_character_range_and_copies(
         cr = conv.content_region
         sy = cr.y + wy - conv.scroll_offset.y
         sx = cr.x + col - conv.scroll_offset.x
+        assert app._driver is not None
         await pilot.mouse_down(None, offset=(sx, sy))
         for x in range(sx + 1, sx + len("Hello world")):
             app._driver.process_message(
@@ -355,7 +386,9 @@ async def test_drag_select_yields_character_range_and_copies(
         # (fg == selection bg would render the text invisible).
         sel_style = next(
             s.style for s in conv.render_line(wy)._segments if s.text.strip())
+        assert sel_style is not None
         assert sel_style.bgcolor is not None
+        assert sel_style.color is not None
         assert sel_style.color != sel_style.bgcolor
         # Ctrl+Shift+C is the copy chord (terminals reserve plain Ctrl+C's
         # keycode differently; Shift+C is what reaches the app outside tmux).
@@ -398,7 +431,7 @@ async def test_paste_into_prompt(
 
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        ta = app.query_one("#prompt")
+        ta = app.query_one("#prompt", AgentTUI.PromptInput)
         ta.focus()
         await pilot.pause()
         app.post_message(events.Paste(text="pasted text"))
@@ -520,7 +553,7 @@ async def test_arrow_up_recalls_prompts_from_this_folder(
 
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        ta = app.query_one("#prompt")
+        ta = app.query_one("#prompt", AgentTUI.PromptInput)
         ta.focus()
         await pilot.pause()
 
@@ -568,7 +601,7 @@ async def test_history_recalls_prompts_typed_in_the_repl(
 
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        ta = app.query_one("#prompt")
+        ta = app.query_one("#prompt", AgentTUI.PromptInput)
         ta.focus()
         await pilot.pause()
         await pilot.press("up")
@@ -594,7 +627,7 @@ async def test_history_parks_draft_and_survives_edit(
 
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        ta = app.query_one("#prompt")
+        ta = app.query_one("#prompt", AgentTUI.PromptInput)
         ta.focus()
         await pilot.pause()
         ta.attach_history(app._history)
@@ -643,7 +676,7 @@ async def test_arrow_up_inside_multiline_prompt_moves_cursor(
 
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        ta = app.query_one("#prompt")
+        ta = app.query_one("#prompt", AgentTUI.PromptInput)
         ta.focus()
         await pilot.pause()
         ta.attach_history(app._history)
@@ -708,7 +741,7 @@ async def test_status_bar_shows_running_task(
 
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        ta = app.query_one("#prompt")
+        ta = app.query_one("#prompt", AgentTUI.PromptInput)
         ta.focus()
         await pilot.pause()
         ta.load_text("fix the failing login test")
@@ -716,7 +749,7 @@ async def test_status_bar_shows_running_task(
         await pilot.pause()
 
         def status_plain() -> str:
-            content = app.query_one("#status").content
+            content = app.query_one("#status", AgentTUI.StatusBar).content
             return content.plain if hasattr(content, "plain") else str(content)
 
         # Submitting recorded the task for the status line while busy…
@@ -782,4 +815,3 @@ def test_fit_line_truncates_at_line_end() -> None:
     assert _fit_line("exact-10!", 10) == "exact-10!"
     assert _fit_line("0123456789A", 10) == "012345678…"
     assert _fit_line("anything", 0) == ""
-

@@ -35,8 +35,10 @@ from .app import AgentTUI, build_schema_from_argv
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if "--help" in argv or "-h" in argv:
+        print(__doc__.strip() if __doc__ else "usage: agentknit-tui [model] [endpoint] [task]")
+        return 0
     schema, kwargs = build_schema_from_argv(argv)
-    cache_key = kwargs.pop("cache_key", None)
     prefill = kwargs.pop("prefill", "")
     try:
         validate_schema(schema)
