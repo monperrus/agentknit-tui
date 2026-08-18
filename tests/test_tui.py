@@ -691,7 +691,7 @@ async def test_status_bar_shows_running_task(
 ) -> None:
     """While a turn runs, the line under the prompt names what it is doing."""
     import agentknit_tui.app as appmod
-    from agentknit_tui.app import _STATUS_TASK_MAX, AgentTUI
+    from agentknit_tui.app import AgentTUI
 
     seen: list[str] = []
 
@@ -727,21 +727,45 @@ async def test_status_bar_shows_running_task(
         assert "working" in status_plain()
         assert "fix the failing login test" in status_plain()
 
-        # Long tasks are truncated to one line with an ellipsis.
-        long_task = "x" * 200
+        # The task sits on its own second line, no truncation at 120 cols.
+        assert status_plain().count("\n") == 1
+        assert "fix the failing login test" in status_plain().splitlines()[1]
+
+        # A long task wraps over the full terminal width onto a second line
+        # and is ellipsized at the end of it — never cut mid-way at 40 chars.
+        width = app._status_width()
+        assert width >= 100  # the full terminal width, not a fixed 40
+        long_task = " ".join(["word"] * 100)
         app._current_task = long_task
         app._watch_current_task()
+        await pilot.pause()
+        width = app._status_width()  # re-read: the bar grew to two rows
         shown = status_plain()
         assert long_task not in shown
-        assert "x" * (_STATUS_TASK_MAX - 1) + "…" in shown
-        assert "\n" not in shown
+        lines = shown.splitlines()
+        assert len(lines) == 3  # summary + two full-width task lines
+        assert lines[0].endswith("working…")
+        assert lines[1].startswith("word word")
+        assert len(lines[1]) <= width
+        assert len(lines[2]) <= width
+        assert lines[2].endswith("…")
 
-        # A multiline task shows only its first line.
+        # An unbreakable task fills both lines and ellipsizes at line end.
+        app._current_task = "x" * 400
+        app._watch_current_task()
+        await pilot.pause()
+        lines = status_plain().splitlines()
+        assert len(lines) == 3
+        assert lines[1] == "x" * width
+        assert lines[2] == "x" * (width - 1) + "…"
+
+        # A multiline task is shown as collapsed prose.
         app._current_task = "first line\nsecond line"
         app._watch_current_task()
         shown = status_plain()
         assert "first line" in shown
-        assert "second line" not in shown
+        assert "second line" in shown
+        assert "\n" in shown
 
         # After the turn ends, the status line drops the task again.
         await _wait_for_log(app, lambda t: "done" in t)
@@ -749,4 +773,13 @@ async def test_status_bar_shows_running_task(
         assert "first line" not in status_plain()
         assert "working" not in status_plain()
         app.exit()
+
+
+def test_fit_line_truncates_at_line_end() -> None:
+    from agentknit_tui.app import _fit_line
+
+    assert _fit_line("short", 20) == "short"
+    assert _fit_line("exact-10!", 10) == "exact-10!"
+    assert _fit_line("0123456789A", 10) == "012345678…"
+    assert _fit_line("anything", 0) == ""
 

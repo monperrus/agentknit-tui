@@ -66,8 +66,8 @@ still reports the session's full totals.
 ### Status bar
 
 The line under the prompt shows the model, session id, token usage, and —
-while a turn is running — a one-line excerpt of the task the agent is
-working on, so a scrolled-away log never loses track of it.
+while a turn is running — the task the agent is working on, wrapped over
+two terminal-width lines so long prompts stay readable.
 To reset the LLM context (session history, keeping the system prompt), run
 `/reset-context` in the TUI; it forwards to agentknit's `/clear` handler.
 

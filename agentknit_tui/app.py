@@ -101,8 +101,17 @@ _PASSTHROUGH_EVENTS = {
 # the model) resumes with just `--session <id>`.
 _TUI_CLI_NAMES = frozenset({"agentknit-tui"})
 
-# Longest first-line excerpt of the running task shown in the status bar.
-_STATUS_TASK_MAX = 40
+# Fallback width for the status bar's task line before the first layout pass.
+_STATUS_FALLBACK_WIDTH = 80
+
+
+def _fit_line(text: str, width: int) -> str:
+    """Truncate *text* to exactly *width* cells, ellipsized when it does not fit."""
+    if width <= 0:
+        return ""
+    if len(text) <= width:
+        return text
+    return text[:width - 1].rstrip() + "…"
 
 
 # ── selectable conversation log ───────────────────────────────────────────────
@@ -236,10 +245,15 @@ class AgentTUI(App):
     }
 
     #status {
-        height: 1;
+        width: 1fr;      /* full terminal width, so the task line wraps to it */
+        height: auto;
+        max-height: 2;
         background: $boost;
         color: $text-muted;
         padding: 0 1;
+    }
+    #status.two-line {
+        padding: 0 1 1 1;
     }
     """
 
@@ -832,7 +846,10 @@ class AgentTUI(App):
     # ── status bar ────────────────────────────────────────────────────────────
 
     class StatusBar(Label):
-        """A single-line status bar reflecting model, session and token usage.
+        """The status bar under the prompt: model, session, tokens, task.
+
+        Two lines when a turn is running: the summary row, then the running
+        task wrapped across the full terminal width. One line when idle.
 
         Subscribed to the app's reactives via :meth:`AgentTUI._refresh_status`;
         token usage is fed here from the ``usage`` / ``session_usage`` events
@@ -880,17 +897,58 @@ class AgentTUI(App):
         if self.busy:
             parts.append(Text(" · ", style="dim"))
             parts.append(Text("working…", style="yellow"))
-            if self._current_task:
-                task = self._current_task.splitlines()[0]
-                if len(task) > _STATUS_TASK_MAX:
-                    task = task[:_STATUS_TASK_MAX - 1] + "…"
-                parts.append(Text(" · ", style="dim"))
-                parts.append(Text(task, style="italic"))
-        return Text.assemble(*parts)
+        status = Text.assemble(*parts)
+        if self.busy and self._current_task:
+            status.append("\n")
+            status.append(Text(self._task_lines().plain, style="italic"))
+        return status
+
+    # ── status bar task line ──────────────────────────────────────────────────
+
+    def _status_width(self) -> int:
+        """Cells available to the status bar's task line, minus its padding."""
+        try:
+            bar = self.query_one("#status", Label)
+        except Exception:
+            return _STATUS_FALLBACK_WIDTH
+        # `content_region` excludes the horizontal padding (0 1), so this is
+        # the real per-line width of the terminal.
+        return bar.content_region.width or _STATUS_FALLBACK_WIDTH
+
+    def _task_lines(self) -> Text:
+        """The running task, word-wrapped over at most two terminal lines."""
+        width = self._status_width()
+        if width <= 0:
+            return Text("")
+
+        # Collapse newlines: the status bar shows a prompt as running prose.
+        task = " ".join(self._current_task.split())
+        if not task:
+            return Text("")
+
+        from rich.console import Console
+
+        lines = list(Text(task).wrap(Console(), width, overflow="fold"))
+        if len(lines) > 2:
+            # Keep two lines and mark the cut with an ellipsis at the line
+            # end: append when there is room, replace the last cell when the
+            # wrap already filled the line.
+            second = lines[1].plain.rstrip() + " …"
+            lines = lines[:2]
+            lines[1] = Text(second if len(second) <= width
+                            else second[:width - 1] + "…")
+        return Text("\n".join(line.plain for line in lines))
+
+    def on_resize(self) -> None:
+        # The task line wraps to the terminal width; re-wrap on resizes.
+        if self.busy and self._current_task:
+            self._refresh_status()
 
     def _refresh_status(self) -> None:
         bar = self.query_one("#status", Label)
         bar.update(self._status_text())
+        # Two rows while busy (summary + task), one row when idle.
+        bar.set_classes("two-line" if self.busy and self._current_task else "")
 
     def watch_model(self, value: str) -> None:
         self._refresh_status()
