@@ -9,3 +9,4 @@ __pycache__/
 shot*.png
 *.png
 .coverage
+dist/
