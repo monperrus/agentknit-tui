@@ -32,6 +32,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -390,7 +391,7 @@ class AgentTUI(App):
         self._event_q.put(_QueuedEvent(event_type, data))
 
     @work(thread=True, exclusive=True, group="turn")
-    def _run_turn(self, task: str) -> None:
+    def _run_turn(self, task: str | None) -> None:
         """Run one agentknit turn on a background thread."""
         self._cancel_token = CancelToken()
         # Pause the global signal-based SIGINT handler while a turn runs in
@@ -702,21 +703,40 @@ class AgentTUI(App):
 
         # Slash command? agentknit's registry prints to stdout; capture it.
         if text.startswith("/"):
-            out = _capture_slash(
-                _slash_registry, text, self._session, self._client, self._model_name
-            )
-            if out is not None:
-                log.write(self._ansi(out) if "\033[" in out else Text(out, style="cyan"))
-                return
+            retried = False
 
-        # Real turn. `_current_task` first: watch_busy refreshes the status
-        # bar synchronously and must already see the running task.
-        self._current_task = text
+            def _on_continue() -> None:
+                nonlocal retried
+                retried = True
+
+            out = _capture_slash(
+                _slash_registry, text, self._session, self._client, self._model_name,
+                on_continue=_on_continue,
+            )
+            if out:
+                log.write(self._ansi(out) if "\033[" in out else Text(out, style="cyan"))
+            if not retried:
+                return
+            # `/c` prints nothing — it just asks for the interrupted turn to
+            # be retried with no new user message appended.
+            self._begin_turn(None)
+            return
+
+        # Real turn.
+        self._begin_turn(text)
+
+    def _begin_turn(self, task: str | None) -> None:
+        """Set busy state and kick off `task` (or a `/c` retry) as a turn.
+
+        `_current_task` first: watch_busy refreshes the status bar
+        synchronously and must already see the running task.
+        """
+        self._current_task = task or "(retrying interrupted turn)"
         self.busy = True
         self._content_buf = []
         self._reasoning_buf = []
         self._streamed_content = False
-        self._run_turn(text)
+        self._run_turn(task)
 
     @on(PromptSubmitted)
     def _on_prompt_submitted(self, message: PromptSubmitted) -> None:
@@ -1132,16 +1152,18 @@ def _strip_panel_chrome(lines: list[str]) -> list[str]:
 
 
 def _capture_slash(registry: Any, line: str, session: dict, client: Any,
-                   model: str) -> str | None:
+                   model: str, *,
+                   on_continue: Callable[[], None] | None = None) -> str | None:
     """Run a slash command, capturing its printed output.
 
     agentknit's slash handlers `print(...)` their result, so we redirect
     stdout around the dispatch and return the captured text. Returns None if
-    the line wasn't a slash command.
+    the line wasn't a slash command. *on_continue* is forwarded to the
+    registry — see :meth:`SlashCommandRegistry.dispatch`.
     """
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        handled = registry.dispatch(line, session, client, model)
+        handled = registry.dispatch(line, session, client, model, on_continue=on_continue)
     if not handled:
         return None
     return buf.getvalue().rstrip()

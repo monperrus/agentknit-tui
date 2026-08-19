@@ -120,3 +120,34 @@ async def test_reset_context_clears_llm_history(monkeypatch: pytest.MonkeyPatch)
         # The registry prints a confirmation, which is captured inline.
         assert "Context cleared" in _log_text(app)
         app.exit()
+
+
+@pytest.mark.asyncio
+async def test_slash_c_retries_interrupted_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`/c` must actually retry the turn, not silently no-op.
+
+    The handler registered for `/c` only sets `session["_continue_requested"]`
+    — it prints nothing. The caller is responsible for noticing the flag and
+    running a turn with no new user message.
+    """
+    import agentknit_tui.app as appmod
+
+    calls: list[str | None] = []
+
+    def fake_turn(self: Any, task: str | None) -> None:
+        calls.append(task)
+        self._event_q.put(appmod._QueuedEvent("final_answer", {"text": "resumed"}))
+        self._event_q.put(None)
+
+    monkeypatch.setattr(appmod.AgentTUI, "_run_turn", fake_turn)
+    app = await _boot(monkeypatch)
+    monkeypatch.setattr(appmod.AgentTUI, "_run_turn", fake_turn)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+
+        await _submit(app, pilot, "/c")
+        await _wait_for_log(app, lambda t: "resumed" in t)
+
+        assert calls == [None]
+        app.exit()
