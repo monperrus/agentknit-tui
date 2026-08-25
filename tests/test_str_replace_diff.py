@@ -30,15 +30,16 @@ async def test_str_replace_call_renders_unified_diff(
             "fmt": "▶ str_replace(path='geometry.py', old_str='def area(r):…",
         }))
         app._event_q.put(None)
-        await _wait_for(app, lambda t: "+    return math.pi" in t)
+        await _wait_for(app, lambda t: "  2 + │ " in t and "math.pi" in t)
 
         text = _log_text(app)
         # Real diff chrome, not the engine's repr one-liner.
         assert "--- geometry.py" in text
         assert "+++ geometry.py" in text
         assert "@@" in text
-        assert "-    return 3.14 * r * r" in text
-        assert "+    return math.pi * r * r" in text
+        assert "  1   │ def area(r):" in text
+        assert "  2 - │     return 3.14 * r * r" in text
+        assert "  2 + │     return math.pi * r * r" in text
         # The repr blob from fmt is replaced entirely.
         assert "old_str=" not in text
         # Line-level red/green plus word-level highlighting.

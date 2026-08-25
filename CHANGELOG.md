@@ -5,6 +5,12 @@
 - `str_replace` tool calls now render as a colorized unified diff (red
   deletions, green additions) with word-level highlighting inside each
   changed line pair, replacing the engine's `repr()` one-liner.
+- The diff gained a line-number gutter showing real file line numbers
+  (located by reading the target file; relative paths also tried against
+  the working directory). Rows are built from `SequenceMatcher` opcodes
+  instead of parsed diff text, so content lines that themselves start
+  with `+`/`-` no longer masquerade as diff chrome or get swallowed by
+  it — the root cause of the doubled-marker `++` rows.
 
 ## 0.1.0
 
