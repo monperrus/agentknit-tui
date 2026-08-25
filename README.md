@@ -75,6 +75,28 @@ Slash commands (`/help`, `/usage`, `/clear`, `/compact`, `/model`, `/reset-conte
 are forwarded to agentknit's command registry; their printed output is
 captured and shown inline.
 
+### `str_replace` diffs
+
+Edits made through the `str_replace` tool are shown as a colorized unified
+diff instead of the tool's argument dump: deleted lines in red, added lines
+in green, and the specific changed *words* within each modified line
+highlighted in bold on a dark background, so a one-word change inside a long
+line is visible at a glance.
+
+```diff
+--- pkg/mod.py
++++ pkg/mod.py
+@@ -1,4 +1,4 @@
+-def greet(name):
+-    # say hello to the user
+-    print("hello " + name)
++def greet(name, greeting="hi"):
++    # greet the user
++    print(greeting + " " + name)
+     return None
+```
+
+
 On exit the TUI prints the command to resume the session on the console,
 exactly like the end of the agentknit REPL:
 

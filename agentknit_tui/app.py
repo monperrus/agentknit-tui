@@ -525,6 +525,10 @@ class AgentTUI(App):
             if et == "tool_result" and data.get("streamed"):
                 log.write(self._render_tool_result(data))
                 return
+            if et == "tool_call" and data.get("name") == "str_replace":
+                # `repr()` of old_str/new_str is unreadable; show a real diff.
+                log.write(self._render_str_replace_call(data))
+                return
             log.write(self._ansi(fmt))
             return
 
@@ -1014,6 +1018,33 @@ class AgentTUI(App):
         if len(segments) == 1:
             return segments[0]
         return Group(*segments)
+
+    def _render_str_replace_call(self, data: dict) -> Any:
+        """Render a ``str_replace`` tool call as a colorized unified diff.
+
+        The engine's generic formatter prints `str_replace(path=…,
+        old_str='…', new_str='…')` with repr()-quoted bodies, which is
+        unreadable for any real edit. The structured args let us rebuild
+        the diff: red deletions, green additions, and word-level
+        highlighting so the exact changed words pop out.
+        """
+        args = data.get("args") or {}
+        path = str(args.get("path") or "?")
+        old = args.get("old_str")
+        new = args.get("new_str")
+        if not isinstance(old, str) or not isinstance(new, str):
+            return self._ansi(data.get("fmt", ""))
+
+        from ._diff import render_str_replace
+
+        body = render_str_replace(path, old, new)
+        return Panel(
+            body,
+            border_style="magenta",
+            title=f"⟨str_replace {path}⟩",
+            title_align="left",
+            padding=(0, 1),
+        )
 
     def _render_tool_result(self, data: dict) -> Any:
         """Render the full body of a streamed tool result.

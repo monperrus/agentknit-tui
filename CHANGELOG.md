@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `str_replace` tool calls now render as a colorized unified diff (red
+  deletions, green additions) with word-level highlighting inside each
+  changed line pair, replacing the engine's `repr()` one-liner.
+
 ## 0.1.0
 
 First public release of the Textual TUI front-end for
