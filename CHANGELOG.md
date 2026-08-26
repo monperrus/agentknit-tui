@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `str_replace` diffs now show up to three lines of real context before
+  and after each change, read from the target file — like `diff -u`
+  instead of an isolated fragment. Falls back to the bare fragment when
+  the file is unreadable or no longer contains the old text.
 - `str_replace` tool calls now render as a colorized unified diff (red
   deletions, green additions) with word-level highlighting inside each
   changed line pair, replacing the engine's `repr()` one-liner.

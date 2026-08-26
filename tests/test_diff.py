@@ -109,3 +109,48 @@ def test_locate_line_finds_offset(tmp_path) -> None:
     assert locate_line("mod.py", "three\n", cwd=str(tmp_path)) == 3
     # Unreadable file: unknown.
     assert locate_line(str(tmp_path / "gone.py"), "x") == 0
+
+
+def test_with_file_context_pads_three_lines_each_side(tmp_path) -> None:
+    from agentknit_tui._diff import with_file_context
+
+    target = tmp_path / "mod.py"
+    target.write_text("".join(f"line {i}\n" for i in range(1, 21)),
+                      encoding="utf-8")
+    anchored = with_file_context(str(target), "line 10\n", "line ten\n")
+    assert anchored is not None
+    old, new, offset = anchored
+    # Three real lines before, the edit, three after.
+    assert old.splitlines() == ["line 7", "line 8", "line 9", "line 10",
+                                "line 11", "line 12", "line 13"]
+    assert new.splitlines() == ["line 7", "line 8", "line 9", "line ten",
+                                "line 11", "line 12", "line 13"]
+    assert offset == 7
+    text = render_str_replace(str(target), old, new, line_offset=offset)
+    assert "7   │ line 7" in text.plain
+    assert "10 - │ line 10" in text.plain
+    assert "10 + │ line ten" in text.plain
+    assert "13   │ line 13" in text.plain
+    assert "line 14" not in text.plain  # context stops at three lines
+
+
+def test_with_file_context_clamps_at_file_edges(tmp_path) -> None:
+    from agentknit_tui._diff import with_file_context
+
+    target = tmp_path / "mod.py"
+    target.write_text("a\nb\nc\n", encoding="utf-8")
+    anchored = with_file_context(str(target), "a\n", "alpha\n")
+    assert anchored is not None
+    old, new, offset = anchored
+    assert old.splitlines() == ["a", "b", "c"]
+    assert new.splitlines() == ["alpha", "b", "c"]
+    assert offset == 1
+
+
+def test_with_file_context_missing_fragment_falls_back(tmp_path) -> None:
+    from agentknit_tui._diff import with_file_context
+
+    target = tmp_path / "mod.py"
+    target.write_text("a\nb\n", encoding="utf-8")
+    assert with_file_context(str(target), "nope\n", "x\n") is None
+    assert with_file_context(str(tmp_path / "gone.py"), "a\n", "x\n") is None

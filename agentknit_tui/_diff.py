@@ -13,6 +13,11 @@ once: the numbers are the *file's* line numbers (located by reading the
 file), and the +/- marker is visually separated from the content — so a
 line that itself begins with ``+`` or ``-`` can never be mistaken for,
 or swallowed by, the diff chrome.
+
+``str_replace`` events carry no position and no surrounding content, so
+:func:`with_file_context` reads the file and pads the edited fragment
+with up to :data:`CONTEXT` real lines before and after it; the diff then
+shows the change the way ``diff -u`` would — in place, with context.
 """
 
 from __future__ import annotations
@@ -139,6 +144,43 @@ def locate_line(path: str, old: str, *, cwd: str | None = None) -> int:
             return 0
         return content.count("\n", 0, idx) + 1
     return 0
+
+
+def with_file_context(path: str, old: str, new: str,
+                      *, cwd: str | None = None) -> tuple[str, str, int] | None:
+    """Re-anchor a ``str_replace`` edit inside the real file content.
+
+    Reads *path* (tried against *cwd* for relative paths, like
+    :func:`locate_line`), finds the ``old`` fragment, and returns
+    ``(old_padded, new_padded, line_offset)`` where the fragment is
+    surrounded by up to :data:`CONTEXT` real lines from the file.
+    Returns ``None`` when the file cannot be read or the fragment is not
+    found — callers fall back to diffing the bare fragment.
+    """
+    if not old:
+        return None
+    candidates = [path]
+    if cwd and not os.path.isabs(path):
+        candidates.append(os.path.join(cwd, path))
+    for cand in candidates:
+        try:
+            with open(cand, encoding="utf-8", errors="replace") as fh:
+                content = fh.read()
+        except OSError:
+            continue
+        idx = content.find(old)
+        if idx < 0:
+            return None
+        lines = content.splitlines(keepends=True)
+        start = content.count("\n", 0, idx)
+        end = start + old.count("\n") + (0 if old.endswith("\n") else 1)
+        start_ctx = max(start - CONTEXT, 0)
+        end_ctx = min(end + CONTEXT, len(lines))
+        old_padded = "".join(lines[start_ctx:end_ctx])
+        at = old_padded.find(old)
+        new_padded = old_padded[:at] + new + old_padded[at + len(old):]
+        return old_padded, new_padded, start_ctx + 1
+    return None
 
 
 def render_str_replace(path: str, old: str, new: str,

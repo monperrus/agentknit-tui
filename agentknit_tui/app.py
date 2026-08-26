@@ -1035,9 +1035,13 @@ class AgentTUI(App):
         if not isinstance(old, str) or not isinstance(new, str):
             return self._ansi(data.get("fmt", ""))
 
-        from ._diff import locate_line, render_str_replace
+        from ._diff import locate_line, render_str_replace, with_file_context
 
-        line_offset = locate_line(path, old, cwd=os.getcwd()) or 1
+        anchored = with_file_context(path, old, new, cwd=os.getcwd())
+        if anchored is not None:
+            old, new, line_offset = anchored
+        else:
+            line_offset = locate_line(path, old, cwd=os.getcwd()) or 1
         body = render_str_replace(path, old, new, line_offset=line_offset)
         return Panel(
             body,
