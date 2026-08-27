@@ -111,6 +111,20 @@ def test_locate_line_finds_offset(tmp_path) -> None:
     assert locate_line(str(tmp_path / "gone.py"), "x") == 0
 
 
+def test_locate_line_falls_back_to_new_when_edit_already_ran(tmp_path) -> None:
+    """The event may be rendered after the tool ran: the file then holds
+    `new`, and the line numbers must still be real, not reset to 1."""
+    target = tmp_path / "mod.py"
+    target.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    assert locate_line(str(target), "two\n", new="TWO\n") == 2
+    # File already rewritten by the tool.
+    target.write_text("one\nTWO\nthree\n", encoding="utf-8")
+    assert locate_line(str(target), "two\n", new="TWO\n") == 2
+    # Neither side present: unknown.
+    target.write_text("other\n", encoding="utf-8")
+    assert locate_line(str(target), "two\n", new="TWO\n") == 0
+
+
 def test_with_file_context_pads_three_lines_each_side(tmp_path) -> None:
     from agentknit_tui._diff import with_file_context
 
@@ -154,3 +168,30 @@ def test_with_file_context_missing_fragment_falls_back(tmp_path) -> None:
     target.write_text("a\nb\n", encoding="utf-8")
     assert with_file_context(str(target), "nope\n", "x\n") is None
     assert with_file_context(str(tmp_path / "gone.py"), "a\n", "x\n") is None
+
+
+def test_with_file_context_anchors_on_new_when_edit_already_ran(tmp_path) -> None:
+    """Tool runs before the UI drains the event: file holds `new`, not `old`.
+
+    The diff must still show old→new with the file's real line numbers
+    and real surrounding context."""
+    from agentknit_tui._diff import with_file_context
+
+    target = tmp_path / "mod.py"
+    target.write_text("".join(f"line {i}\n" for i in range(1, 21)),
+                      encoding="utf-8")
+    # The tool already applied the edit: line 10 is now "line ten".
+    target.write_text("".join(
+        f"line {'ten' if i == 10 else i}\n" for i in range(1, 21)),
+        encoding="utf-8")
+    anchored = with_file_context(str(target), "line 10\n", "line ten\n")
+    assert anchored is not None
+    old, new, offset = anchored
+    assert old.splitlines()[3] == "line 10"
+    assert new.splitlines()[3] == "line ten"
+    assert offset == 7
+    text = render_str_replace(str(target), old, new, line_offset=offset)
+    assert "10 - │ line 10" in text.plain
+    assert "10 + │ line ten" in text.plain
+    assert "7   │ line 7" in text.plain
+    assert "13   │ line 13" in text.plain

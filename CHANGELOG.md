@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fixed `str_replace` diff line numbers resetting to 1 when the tool had
+  already rewritten the file by the time the event was rendered (the UI
+  drains events after the tool executes): the diff now anchors on the
+  replacement text in that case, so the line-number gutter and context
+  lines stay real either way.
 - `str_replace` diffs now show up to three lines of real context before
   and after each change, read from the target file — like `diff -u`
   instead of an isolated fragment. Falls back to the bare fragment when

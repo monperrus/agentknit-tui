@@ -120,26 +120,49 @@ def _fmt_range(idx: int, count: int, offset: int) -> str:
     return f"{begin},{count}"
 
 
-def locate_line(path: str, old: str, *, cwd: str | None = None) -> int:
+def _read_candidates(path: str, cwd: str | None) -> list[str]:
+    """Paths to try reading: *path* as given, then resolved against *cwd*."""
+    candidates = [path]
+    if cwd and not os.path.isabs(path):
+        candidates.append(os.path.join(cwd, path))
+    return candidates
+
+
+def _anchor_index(content: str, old: str, new: str) -> int:
+    """Index where the edited fragment starts in *content*, -1 if absent.
+
+    Prefers the pre-edit *old* text; falls back to *new* for a file that
+    has already been rewritten — the event may be rendered after the tool
+    ran, when ``old_str`` no longer exists but its replacement does.
+    """
+    if old:
+        idx = content.find(old)
+        if idx >= 0:
+            return idx
+    if new:
+        return content.find(new)
+    return -1
+
+
+def locate_line(path: str, old: str, *, cwd: str | None = None,
+                new: str | None = None) -> int:
     """Best-effort 1-based file line where *old* starts, 0 if unknown.
 
     ``str_replace`` events carry no position, so read the file and find
     the fragment. Relative paths are tried against *cwd* too, since the
     engine may resolve them against its workspace rather than the TUI's
-    process directory.
+    process directory. *new* (the replacement text) is tried when *old*
+    is no longer in the file — the edit already ran.
     """
-    if not old:
+    if not old and not new:
         return 0
-    candidates = [path]
-    if cwd and not os.path.isabs(path):
-        candidates.append(os.path.join(cwd, path))
-    for cand in candidates:
+    for cand in _read_candidates(path, cwd):
         try:
             with open(cand, encoding="utf-8", errors="replace") as fh:
                 content = fh.read()
         except OSError:
             continue
-        idx = content.find(old)
+        idx = _anchor_index(content, old, new or "")
         if idx < 0:
             return 0
         return content.count("\n", 0, idx) + 1
@@ -154,31 +177,41 @@ def with_file_context(path: str, old: str, new: str,
     :func:`locate_line`), finds the ``old`` fragment, and returns
     ``(old_padded, new_padded, line_offset)`` where the fragment is
     surrounded by up to :data:`CONTEXT` real lines from the file.
-    Returns ``None`` when the file cannot be read or the fragment is not
-    found — callers fall back to diffing the bare fragment.
+    When the file no longer contains ``old`` but contains ``new`` (the
+    edit already ran when the event is rendered), the window is anchored
+    on ``new`` instead — line numbers stay real either way.
+    Returns ``None`` when the file cannot be read or neither fragment
+    is found — callers fall back to diffing the bare fragment.
     """
     if not old:
         return None
-    candidates = [path]
-    if cwd and not os.path.isabs(path):
-        candidates.append(os.path.join(cwd, path))
-    for cand in candidates:
+    for cand in _read_candidates(path, cwd):
         try:
             with open(cand, encoding="utf-8", errors="replace") as fh:
                 content = fh.read()
         except OSError:
             continue
+        # The tool_call event may be rendered after the tool already ran
+        # (the queue drains later than the tool executes), so the file may
+        # hold `new` where `old` used to be. Anchor on `new` then: the
+        # window and its line numbers are still real, and the pre-edit
+        # side of the diff is rebuilt by substituting `old` back in.
+        anchor, applied = old, False
         idx = content.find(old)
         if idx < 0:
-            return None
+            idx = content.find(new)
+            if idx < 0:
+                return None
+            anchor, applied = new, True
         lines = content.splitlines(keepends=True)
         start = content.count("\n", 0, idx)
-        end = start + old.count("\n") + (0 if old.endswith("\n") else 1)
+        end = start + anchor.count("\n") + (0 if anchor.endswith("\n") else 1)
         start_ctx = max(start - CONTEXT, 0)
         end_ctx = min(end + CONTEXT, len(lines))
-        old_padded = "".join(lines[start_ctx:end_ctx])
-        at = old_padded.find(old)
-        new_padded = old_padded[:at] + new + old_padded[at + len(old):]
+        padded = "".join(lines[start_ctx:end_ctx])
+        at = padded.find(anchor)
+        old_padded = padded if not applied else padded[:at] + old + padded[at + len(anchor):]
+        new_padded = padded if applied else padded[:at] + new + padded[at + len(old):]
         return old_padded, new_padded, start_ctx + 1
     return None
 

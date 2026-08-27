@@ -1041,7 +1041,7 @@ class AgentTUI(App):
         if anchored is not None:
             old, new, line_offset = anchored
         else:
-            line_offset = locate_line(path, old, cwd=os.getcwd()) or 1
+            line_offset = locate_line(path, old, new=new, cwd=os.getcwd()) or 1
         body = render_str_replace(path, old, new, line_offset=line_offset)
         return Panel(
             body,
