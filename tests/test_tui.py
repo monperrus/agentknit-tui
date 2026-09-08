@@ -113,6 +113,36 @@ async def test_boot_renders_header_and_tools(monkeypatch: pytest.MonkeyPatch) ->
 
 
 @pytest.mark.asyncio
+async def test_boot_lists_activated_tools_from_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The startup banner lists the tools actually activated in the session
+    (like the plain agentknit REPL), not just the schema's declared specs."""
+
+    import agentknit_tui.app as appmod
+    from agentknit_tui.app import AgentTUI
+
+    _patch_no_network(monkeypatch)
+
+    def fake_init_session(schema: dict, **_: Any) -> dict:
+        return {"session_id": "abc123", "model": schema["model"],
+                "messages": [], "log_path": "/tmp/x.jsonl",
+                "tools": [
+                    {"function": {"name": "read_file"}},
+                    {"function": {"name": "write_file"}},
+                ]}
+
+    monkeypatch.setattr(appmod, "init_session", fake_init_session)
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        text = _log_text(app)
+        assert "2 tools: read_file, write_file" in text
+        app.exit()
+
+
+@pytest.mark.asyncio
 async def test_resume_session_survives_sync_event_from_init_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

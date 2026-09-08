@@ -361,7 +361,7 @@ class AgentTUI(App):
 
         tool_names = [
             ((t.get("function") or t).get("name", "?"))
-            for t in (self._schema.get("inferred_tool_schema") or [])
+            for t in (self._session.get("tools") or self._schema.get("inferred_tool_schema") or [])
         ]
         if tool_names:
             log.write(Text(f"{len(tool_names)} tools: {', '.join(tool_names)}",
