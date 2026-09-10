@@ -1066,6 +1066,10 @@ class AgentTUI(App):
 
         name = data.get("name", "tool")
         raw = data.get("result") or ""
+        if not isinstance(raw, str):
+            # Tool/adapter bugs can surface non-str results (booleans,
+            # dicts); render them instead of crashing on splitlines().
+            raw = str(raw)
 
         body = raw
         returncode = 0
