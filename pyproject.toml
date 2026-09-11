@@ -4,7 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentknit-tui"
-version = "0.1.0"
+# Placeholder, matching agentknit's. The published version is decided at
+# release time by pyproject-bump-pypi from the current PyPI version; this
+# value is only a fallback for a package PyPI has never seen.
+version = "0.999.0"
 description = "Textual TUI front-end for agentknit coding agents."
 readme = "README.md"
 license = {text = "MIT"}
