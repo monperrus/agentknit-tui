@@ -286,6 +286,7 @@ class AgentTUI(App):
         system_prompt_supplement: str = "",
         max_output_tokens: int | None = None,
         strict_cache_proof: bool = True,
+        min_cacheable_tokens: int | None = None,
         prefill: str = "",
     ) -> None:
         super().__init__()
@@ -327,6 +328,7 @@ class AgentTUI(App):
             system_prompt_supplement=system_prompt_supplement,
             max_output_tokens=max_output_tokens,
             strict_cache_proof=strict_cache_proof,
+            min_cacheable_tokens=min_cacheable_tokens,
             on_event=self._on_event,
         )
         self._model_name = self._session.get("model") or schema.get("model", "agent")
