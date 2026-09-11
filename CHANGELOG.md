@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The `[budget]` token countdown is now echoed to the conversation log only
+  when usage crosses into a new decile of the context budget (i.e. after
+  another 10% was consumed), instead of after every LLM call.
 - Fixed the running task no longer appearing in the status bar while a turn
   runs: the bar's `max-height: 2` combined with the busy-state bottom
   padding pushed the task row out of the content region, so it painted
