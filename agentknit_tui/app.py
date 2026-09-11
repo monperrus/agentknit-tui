@@ -934,7 +934,9 @@ class AgentTUI(App):
         if self.prompt_tokens or self.completion_tokens:
             usage_bits = [f"tokens {self.prompt_tokens + self.completion_tokens:,}"]
             if self.cached_tokens:
-                usage_bits.append(f"({self.cached_tokens:,} cached)")
+                total = self.prompt_tokens + self.completion_tokens
+                pct = (self.cached_tokens / total * 100) if total else 0
+                usage_bits.append(f"({self.cached_tokens:,} cached, {pct:.1f}%)")
             parts.append(Text(" · ", style="dim"))
             parts.append(Text(" ".join(usage_bits), style="cyan"))
         if self.busy:
