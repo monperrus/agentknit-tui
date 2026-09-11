@@ -822,6 +822,19 @@ async def test_status_bar_shows_running_task(
         assert lines[1] == "x" * width
         assert lines[2] == "x" * (width - 1) + "…"
 
+        # Regression: the busy task row must be painted on screen, not just
+        # present in the label's content. A `max-height` + bottom-padding
+        # combo once left row 1 outside the content region, so it rendered
+        # blank while `content` still held the task text.
+        bar = app.query_one("#status", AgentTUI.StatusBar)
+        app.busy = True
+        app._current_task = "fix the failing login test"
+        app._watch_current_task()
+        await pilot.pause()
+        painted = [bar.render_line(y).text.rstrip()
+                   for y in range(bar.region.height)]
+        assert any("fix the failing login test" in row for row in painted[1:])
+
         # A multiline task is shown as collapsed prose.
         app._current_task = "first line\nsecond line"
         app._watch_current_task()

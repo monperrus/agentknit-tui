@@ -248,13 +248,12 @@ class AgentTUI(App):
     #status {
         width: 1fr;      /* full terminal width, so the task line wraps to it */
         height: auto;
-        max-height: 2;
+        /* No max-height + no extra padding: a taller box with bottom padding
+           or a capped max-height leaves the second content row outside the
+           content region, so the running-task row would render blank. */
         background: $boost;
         color: $text-muted;
         padding: 0 1;
-    }
-    #status.two-line {
-        padding: 0 1 1 1;
     }
     """
 
@@ -990,10 +989,7 @@ class AgentTUI(App):
             self._refresh_status()
 
     def _refresh_status(self) -> None:
-        bar = self.query_one("#status", Label)
-        bar.update(self._status_text())
-        # Two rows while busy (summary + task), one row when idle.
-        bar.set_classes("two-line" if self.busy and self._current_task else "")
+        self.query_one("#status", Label).update(self._status_text())
 
     def watch_model(self, value: str) -> None:
         self._refresh_status()

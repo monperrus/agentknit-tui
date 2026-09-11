@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fixed the running task no longer appearing in the status bar while a turn
+  runs: the bar's `max-height: 2` combined with the busy-state bottom
+  padding pushed the task row out of the content region, so it painted
+  blank even though the label held the text. The bar now grows naturally
+  (summary row + task row, no cap, no extra padding).
 - Fixed `str_replace` diff line numbers resetting to 1 when the tool had
   already rewritten the file by the time the event was rendered (the UI
   drains events after the tool executes): the diff now anchors on the
