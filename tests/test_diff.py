@@ -21,9 +21,9 @@ def test_plain_diff_lines_are_present() -> None:
     assert "--- pkg/mod.py" in text.plain
     assert "+++ pkg/mod.py" in text.plain
     assert "@@ -1,2 +1,2 @@" in text.plain
-    assert "1   │ a" in text.plain       # context row keeps its marker
-    assert "2 - │ b" in text.plain       # deletion
-    assert "2 + │ c" in text.plain       # addition
+    assert "1    a" in text.plain       # context row keeps its marker
+    assert "2 -  b" in text.plain       # deletion
+    assert "2 +  c" in text.plain       # addition
 
 
 def test_changed_lines_carry_line_colors() -> None:
@@ -57,7 +57,7 @@ def test_word_highlight_on_both_sides() -> None:
 
 def test_insertion_only_is_all_green() -> None:
     text = render_str_replace("n.py", "", "fresh line\n")
-    assert "1 + │ fresh line" in text.plain
+    assert "1 +  fresh line" in text.plain
     colors = _colors(text)
     assert "green" in colors
     assert "red" not in colors
@@ -66,17 +66,17 @@ def test_insertion_only_is_all_green() -> None:
 def test_content_lines_starting_with_diff_markers_survive() -> None:
     """A '+'/'-' in the *content* must not be read as (or eaten by) chrome."""
     text = render_str_replace("d.py", "keep\n", "keep\n++ added\n- gone\n")
-    assert "2 + │ ++ added" in text.plain
-    assert "3 + │ - gone" in text.plain
+    assert "2 +  ++ added" in text.plain
+    assert "3 +  - gone" in text.plain
     # And the mirrored deletion side.
     text = render_str_replace("d.py", "keep\n- gone\n", "keep\n")
-    assert "2 - │ - gone" in text.plain
+    assert "2 -  - gone" in text.plain
 
 
 def test_line_numbers_track_the_offset() -> None:
     text = render_str_replace("d.py", "x\n", "y\n", line_offset=42)
-    assert "42 - │ x" in text.plain
-    assert "42 + │ y" in text.plain
+    assert "42 -  x" in text.plain
+    assert "42 +  y" in text.plain
     assert "@@ -42 +42 @@" in text.plain
 
 
@@ -141,10 +141,10 @@ def test_with_file_context_pads_three_lines_each_side(tmp_path) -> None:
                                 "line 11", "line 12", "line 13"]
     assert offset == 7
     text = render_str_replace(str(target), old, new, line_offset=offset)
-    assert "7   │ line 7" in text.plain
-    assert "10 - │ line 10" in text.plain
-    assert "10 + │ line ten" in text.plain
-    assert "13   │ line 13" in text.plain
+    assert "7    line 7" in text.plain
+    assert "10 -  line 10" in text.plain
+    assert "10 +  line ten" in text.plain
+    assert "13    line 13" in text.plain
     assert "line 14" not in text.plain  # context stops at three lines
 
 
@@ -191,7 +191,7 @@ def test_with_file_context_anchors_on_new_when_edit_already_ran(tmp_path) -> Non
     assert new.splitlines()[3] == "line ten"
     assert offset == 7
     text = render_str_replace(str(target), old, new, line_offset=offset)
-    assert "10 - │ line 10" in text.plain
-    assert "10 + │ line ten" in text.plain
-    assert "7   │ line 7" in text.plain
-    assert "13   │ line 13" in text.plain
+    assert "10 -  line 10" in text.plain
+    assert "10 +  line ten" in text.plain
+    assert "7    line 7" in text.plain
+    assert "13    line 13" in text.plain

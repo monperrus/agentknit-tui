@@ -12,7 +12,8 @@ Every row carries a line-number gutter, which solves two problems at
 once: the numbers are the *file's* line numbers (located by reading the
 file), and the +/- marker is visually separated from the content — so a
 line that itself begins with ``+`` or ``-`` can never be mistaken for,
-or swallowed by, the diff chrome.
+or swallowed by, the diff chrome. The gutter uses spaces only (no
+vertical-bar glyph), so copied diff lines paste clean.
 
 ``str_replace`` events carry no position and no surrounding content, so
 :func:`with_file_context` reads the file and pads the edited fragment
@@ -36,8 +37,9 @@ CONTEXT = 3
 # cannot flood the conversation log.
 _MAX_LINES = 400
 
-# Separator between the line-number/marker gutter and the content.
-_GUTTER = " │ "
+# Separator between the line-number/marker gutter and the content. No
+# vertical-bar glyphs: they read as panel chrome and paste as garbage.
+_GUTTER = "  "
 
 _HEADER = Style(color="yellow", bold=True)
 _HUNK = Style(color="cyan", bold=True)

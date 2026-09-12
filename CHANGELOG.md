@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Paste-safe rendering: the conversation log no longer draws Rich panels
+  around user prompts, assistant replies, tool output or diffs — the `│`
+  gutters and border rows copied as garbage. Blocks are now delimited by a
+  single styled heading line (`you`, the model name, `⟨tool output⟩`,
+  `⟨str_replace path⟩`).
+- Paste-safe copies everywhere: every copied selection line is right-trimmed
+  of the padding Rich pads blocks to (the clipboard gets the payload only),
+  and the `str_replace` diff gutter no longer uses a `│` separator between
+  the line number/marker and the content.
+- Assistant markdown renders flush: paragraphs, headings, lists, quotes,
+  tables and code blocks no longer pad each line to the terminal width, so
+  copying a reply yields the text without trailing-space filler.
 - The `[budget]` token countdown is now echoed to the conversation log only
   when usage crosses into a new decile of the context budget (i.e. after
   another 10% was consumed), instead of after every LLM call.

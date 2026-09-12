@@ -54,9 +54,10 @@ agentknit-tui --no-strict-cache-proof
   `pbcopy`, `clip.exe`) and also emits OSC 52; one of the two reaches the
   system clipboard even in VTE terminals that ignore OSC 52 (Terminator,
   older gnome-terminal).
-- Copying out of a bordered block (your prompt, replies, tool output) strips
-  the Rich panel chrome first, so the clipboard gets the payload text — no
-  leading `│` gutter, no border rows.
+- Every line the TUI renders is paste-safe: turns, replies, diffs and tool
+  output carry no `│` gutters or box-drawing borders, and no right-hand
+  padding — copying a selection (or a whole block) yields the payload text
+  exactly. Copied lines are trimmed of any trailing filler.
 
 `Ctrl+L` (and the TUI's built-in `/clear` alias) wipes the displayed log
 and zeroes the token counters in the status bar; the agent's message
@@ -81,7 +82,9 @@ Edits made through the `str_replace` tool are shown as a colorized unified
 diff instead of the tool's argument dump: deleted lines in red, added lines
 in green, and the specific changed *words* within each modified line
 highlighted in bold on a dark background, so a one-word change inside a long
-line is visible at a glance.
+line is visible at a glance. Each row carries the file's real line number
+plus the `+`/`-` marker, separated from the content by spaces only — no
+vertical-bar gutter, so copied diff lines paste clean.
 
 ```diff
 --- pkg/mod.py

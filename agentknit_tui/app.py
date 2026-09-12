@@ -48,12 +48,22 @@ from agentknit import _core as _ak_core
 from agentknit._core import _build_resume_cmd
 from agentknit.exceptions import RateLimitError
 from agentknit.slash_commands import REGISTRY as _slash_registry
+from rich import box
 from rich.ansi import AnsiDecoder
-from rich.console import Group
-from rich.markdown import Markdown
-from rich.panel import Panel
+from rich.console import Console, Group, RenderResult
+from rich.markdown import (
+    BlockQuote,
+    CodeBlock,
+    Heading,
+    ListItem,
+    Markdown,
+    Paragraph,
+    TableElement,
+)
 from rich.segment import Segment
 from rich.style import Style
+from rich.syntax import Syntax
+from rich.table import Table
 from rich.text import Text
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -104,6 +114,113 @@ _TUI_CLI_NAMES = frozenset({"agentknit-tui"})
 
 # Fallback width for the status bar's task line before the first layout pass.
 _STATUS_FALLBACK_WIDTH = 80
+
+
+# ── copy-safe markdown ────────────────────────────────────────────────────────
+
+
+class _FlushMarkdown(Markdown):
+    """Markdown whose rendered lines carry no copy-hostile padding.
+
+    Rich's stock elements pad every line to the console width (paragraph
+    ``justify="left"``, code blocks with ``padding=1``, headings centered),
+    so a copied selection is trailed by a run of spaces on every line.
+    These subclasses render flush-left/right-trimmed instead:
+
+    * paragraphs and headings justify ``default`` (no padding),
+    * code blocks render as bare syntax with zero padding,
+    * block quotes keep their content but drop the ``▌`` gutter.
+
+    Line structure (blank lines, wrapping) is identical to stock Markdown;
+    only the horizontal filler differs.
+    """
+
+    class _Paragraph(Paragraph):
+        def __rich_console__(self, console: Console, options: Any) -> RenderResult:
+            self.text.justify = "default"
+            yield self.text
+
+    class _Heading(Heading):
+        LEVEL_ALIGN = {f"h{i}": "default" for i in range(1, 7)}
+
+    class _CodeBlock(CodeBlock):
+        def __rich_console__(self, console: Console, options: Any) -> RenderResult:
+            code = str(self.text).rstrip()
+            yield Syntax(code, self.lexer_name, theme=self.theme,
+                         word_wrap=True, padding=0)
+
+    class _BlockQuote(BlockQuote):
+        def __rich_console__(self, console: Console, options: Any) -> RenderResult:
+            # Render children directly (no render_lines) so nothing is padded
+            # to the console width.
+            yield from console.render(self.elements, options)
+
+    class _ListItem(ListItem):
+        def render_bullet(self, console: Console, options: Any) -> RenderResult:
+            # Render children without render_lines (no width padding); a
+            # leading "• " marks the item, wrapped rows align under it.
+            new_line = Segment("\n")
+            for first, line in enumerate(
+                self._child_lines(console, options, indent=2)
+            ):
+                yield (Segment("• ") if first == 0 else Segment("  "))
+                yield from line
+                yield new_line
+
+        def render_number(self, console: Console, options: Any, number: int,
+                          last_number: int) -> RenderResult:
+            number_width = len(str(last_number)) + 1
+            new_line = Segment("\n")
+            for first, line in enumerate(
+                self._child_lines(console, options, indent=number_width)
+            ):
+                if first == 0:
+                    yield Segment(f"{number}.".rjust(number_width) + " ")
+                else:
+                    yield Segment(" " * (number_width + 1))
+                yield from line
+                yield new_line
+
+        def _child_lines(self, console: Console, options: Any,
+                         *, indent: int) -> list[list[Segment]]:
+            width = max(options.max_width - indent, 1)
+            out: list[list[Segment]] = []
+            for child in self.elements._renderables:  # noqa: SLF001
+                segments = console.render(child, options.update(width=width))
+                lines = [list(line) for line in Segment.split_lines(segments)]
+                if out:
+                    out[-1].pop()  # drop the child's trailing newline
+                out.extend(lines)
+            return out
+
+    class _TableElement(TableElement):
+        def __rich_console__(self, console: Console, options: Any) -> RenderResult:
+            # show_edge=False drops the blank padding rows top/bottom.
+            table = Table(
+                box=box.SIMPLE,
+                pad_edge=False,
+                style="markdown.table.border",
+                show_edge=False,
+                collapse_padding=True,
+            )
+            if self.header is not None and self.header.row is not None:
+                for column in self.header.row.cells:
+                    heading = column.content.copy()
+                    heading.stylize("markdown.table.header")
+                    table.add_column(heading)
+            if self.body is not None:
+                for row in self.body.rows:
+                    table.add_row(*[element.content for element in row.cells])
+            yield table
+
+    elements = {**Markdown.elements,
+                "paragraph_open": _Paragraph,
+                "heading_open": _Heading,
+                "fence": _CodeBlock,
+                "code_block": _CodeBlock,
+                "blockquote_open": _BlockQuote,
+                "list_item_open": _ListItem,
+                "table_open": _TableElement}
 
 
 def _fit_line(text: str, width: int) -> str:
@@ -199,7 +316,7 @@ class SelectableRichLog(RichLog):
             elif y == end.y:
                 text = text[:end.x]
             out.append(text)
-        return "\n".join(_strip_panel_chrome(out)), "\n"
+        return _clean_selection_lines(out), "\n"
 
 
 # ── the app ───────────────────────────────────────────────────────────────────
@@ -363,7 +480,7 @@ class AgentTUI(App):
         self.session_id = self._session.get("session_id", "…")
 
         log = self.query_one("#conversation", SelectableRichLog)
-        log.write(self._header_panel())
+        log.write(self._header_block())
 
         tool_names = [
             ((t.get("function") or t).get("name", "?"))
@@ -736,7 +853,7 @@ class AgentTUI(App):
             # as "tokens of what's on screen".
             self._reset_usage_status()
             log.clear()
-            log.write(self._header_panel())
+            log.write(self._header_block())
             return
         if lowered == "/reset-context":
             # Route to the registry's real /clear handler, which resets the
@@ -896,7 +1013,7 @@ class AgentTUI(App):
         self._reset_usage_status()
         log = self.query_one("#conversation", SelectableRichLog)
         log.clear()
-        log.write(self._header_panel())
+        log.write(self._header_block())
 
     def _reset_usage_status(self) -> None:
         """Zero the token counters shown in the status bar.
@@ -1081,12 +1198,9 @@ class AgentTUI(App):
         else:
             line_offset = locate_line(path, old, new=new, cwd=os.getcwd()) or 1
         body = render_str_replace(path, old, new, line_offset=line_offset)
-        return Panel(
+        return Group(
+            Text(f"⟨str_replace {path}⟩", style="bold magenta"),
             body,
-            border_style="magenta",
-            title=f"⟨str_replace {path}⟩",
-            title_align="left",
-            padding=(0, 1),
         )
 
     def _render_tool_result(self, data: dict) -> Any:
@@ -1141,42 +1255,32 @@ class AgentTUI(App):
             # Escape the bracket: "[exit 2]" would parse as Rich markup.
             title += f" \\[exit {returncode}]"
 
-        return Panel(
-            Text(body, style=f"dim {colour}"),
-            border_style=colour,
-            title=title,
-            title_align="left",
-            padding=(0, 1),
+        return Text.assemble(
+            (title + "\n", f"bold {colour}"),
+            (body, f"dim {colour}"),
         )
 
-    def _header_panel(self) -> Panel:
-        return Panel(
-            Text.assemble(
-                (self.title + "\n", "bold"),
-                ("type a task to get started", "dim"),
-            ),
-            border_style="blue",
-            padding=(0, 1),
+    def _header_block(self) -> Text:
+        return Text.assemble(
+            (self.title + "\n", "bold blue"),
+            ("type a task to get started\n", "dim blue"),
         )
 
-    def _render_user(self, text: str) -> Any:
-        return Panel(
-            Text(text),
-            border_style="green",
-            title="you",
-            title_align="left",
-            padding=(0, 1),
-        )
+    def _render_user(self, text: str) -> Text:
+        return Text.assemble(("you\n", "bold green"), (text, ""))
 
     def _render_assistant(self, text: str) -> Any:
-        # Render assistant prose as Markdown inside a panel, mirroring the
-        # REPL's green `»` marker. Falls back to plain Text if MD parse fails.
+        # Render assistant prose as Markdown, flush-trimmed so copies carry
+        # no padding (see _FlushMarkdown). Falls back to plain Text if the
+        # MD parse fails.
         try:
-            body: Any = Markdown(text)
+            # code_theme=ansi_*: transparent background — the syntax renderer
+            # pads lines to full width otherwise (copy-hostile padding), and
+            # ANSI colors keep the TUI's own palette.
+            body: Any = _FlushMarkdown(text, code_theme="ansi_dark")
         except Exception:  # noqa: BLE001
             body = Text(text)
-        return Panel(body, border_style="cyan", title=self._model_name,
-                     title_align="left", padding=(0, 1))
+        return Group(Text(self._model_name, style="bold cyan"), body)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -1189,44 +1293,38 @@ def _session_log_path(session: dict) -> str:
         return "—"
 
 
-# Vertical panel border characters, as rendered by Rich's box drawing.
+# Vertical border characters of Rich's box-drawing variants, plus the
+# single-cell left/right corner glyphs — any of these glued to the payload
+# means "panel chrome leaked into the copy".
 _PANEL_VBORDERS = "│┃║"
 
 
-def _strip_panel_chrome(lines: list[str]) -> list[str]:
-    """Drop Rich panel borders/padding from copied selection lines.
+def _clean_selection_lines(lines: list[str]) -> str:
+    """Make copied selection lines paste-safe.
 
-    Copying a panel whose content wraps (long tasks, wide tool output)
-    prefix-eats the ``│`` gutter on every middle row. Detect a bordered
-    block and keep only the inner text so the clipboard gets the payload.
+    Rich pads every rendered line of a wrapped block to the block's width,
+    and Textual's ``RichLog.write`` pads each stored strip again to the
+    render width — so a raw copy trails every line with spaces (garbage on
+    paste, especially into editors that highlight trailing whitespace).
+    Legacy panels (now retired) could additionally leak their ``│`` gutter;
+    both are stripped here so the clipboard gets the payload only:
+
+    * every line is right-trimmed of padding,
+    * a leading panel gutter (``│`` + one padding space) is dropped,
+    * full border rows (``╭─…─╮`` with any title) are removed entirely.
     """
-    if not lines:
-        return lines
-    body = [ln.rstrip() for ln in lines]
-    if len(body) < 2:
-        return body
-    first = body[0].lstrip()
-    top_border = first.startswith("╭─") or first.startswith("┌─")
-    if not top_border and body[0][:1] not in _PANEL_VBORDERS:
-        return body  # not a bordered block
-    last = body[-1].lstrip()
-    bottom_border = last[:1] in "╰└"
-    if not bottom_border and not (top_border or body[0][:1] in _PANEL_VBORDERS):
-        return body
-
-    def _inner(ln: str) -> str:
-        if ln[:1] in _PANEL_VBORDERS + "┌└":
-            ln = ln[1:]
-        if ln[:1] == " ":
-            ln = ln[1:]
-        return ln.rstrip(" │┃║╮╯┐┘").rstrip()
-
-    out = []
-    for ln in body:
-        if ln.lstrip()[:1] in "╭╰┌└":
+    out: list[str] = []
+    for ln in lines:
+        stripped = ln.rstrip()
+        if stripped.lstrip()[:1] in "╭╰┌└╶╰":
             continue  # border row (top/bottom edge, with any title)
-        out.append(_inner(ln))
-    return out
+        if stripped[:1] in _PANEL_VBORDERS:
+            stripped = stripped[1:]
+            if stripped[:1] == " ":
+                stripped = stripped[1:]
+        stripped = stripped.rstrip(" │┃║╮╯┐┘").rstrip()
+        out.append(stripped)
+    return "\n".join(out).rstrip("\n")
 
 
 def _capture_slash(registry: Any, line: str, session: dict, client: Any,
