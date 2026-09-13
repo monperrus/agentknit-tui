@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Reading no longer fights the agent: scrolling the conversation up
+  (mouse wheel or `PageUp`) detaches the view from the end, so new
+  messages append silently instead of yanking you back to the bottom —
+  you can keep reading while the turn keeps streaming. Scrolling back to
+  the bottom (or `PageDown` within a page of it) re-attaches the
+  auto-follow. This replaces Textual's `auto_scroll`, which jumped to
+  the end on every write.
+- `PageUp`/`PageDown` now page the conversation even while the prompt
+  holds focus (they previously only moved the prompt's own cursor).
+
 - Paste-safe rendering: the conversation log no longer draws Rich panels
   around user prompts, assistant replies, tool output or diffs — the `│`
   gutters and border rows copied as garbage. Blocks are now delimited by a

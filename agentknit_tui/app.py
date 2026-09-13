@@ -253,10 +253,55 @@ class SelectableRichLog(RichLog):
     * ``get_selection`` extracts the text from the stored strips, since the
       base ``Widget.get_selection`` inspects ``_render()``, which for a
       multi-line log is not the text either.
+
+    Scrolling is bottom-pinned by position instead of the stock
+    ``auto_scroll`` (which jumps to the end on *every* write, ripping the
+    view away from whatever you scrolled up to read while the agent keeps
+    streaming). :meth:`write` checks whether the viewport sits at the
+    bottom *before* appending; only then does it scroll after the write.
+    Scrolling up detaches (new messages append silently), scrolling back
+    to the bottom re-attaches. Textual's own ``anchor()`` is not used:
+    its release/restore is unreliable across wheel and key scrolls.
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        # Pinning is driven by write() below; the stock per-write
+        # scroll-to-end must stay off or it would fight the reader.
+        self.auto_scroll = False
+
+    def _pinned_to_end(self) -> bool:
+        """Is the user sitting at (or scrolling toward) the bottom?"""
+        if not self.size:
+            return True
+        # scroll_target_y, not scroll_offset: during an animated scroll the
+        # target already says where the user is headed.
+        return round(self.scroll_target_y) >= self.max_scroll_y
+
+    def write(  # type: ignore[override]
+        self,
+        content: Any,
+        width: int | None = None,
+        expand: bool = False,
+        shrink: bool = True,
+        scroll_end: bool | None = None,
+        animate: bool = False,
+    ) -> Any:
+        """Append content, following the end only if the reader is there.
+
+        ``scroll_end=None`` (the default) applies the pin rule — follow when
+        the viewport is at the bottom, hold position when it was scrolled
+        up. An explicit ``True``/``False`` forces the behavior for that
+        write.
+        """
+        follow = self._pinned_to_end() if scroll_end is None else scroll_end
+        result = super().write(content, width=width, expand=expand, shrink=shrink,
+                               scroll_end=False, animate=animate)
+        if follow:
+            # immediate=False: scroll after the refresh, when max_scroll_y
+            # already accounts for the lines just appended.
+            self.scroll_end(animate=animate, immediate=False, x_axis=False)
+        return result
 
     def render_line(self, y: int) -> Strip:
         scroll_x, scroll_y = self.scroll_offset
@@ -380,6 +425,13 @@ class AgentTUI(App):
         Binding("escape", "maybe_cancel", "Cancel turn",
                 priority=True, show=False),
         Binding("ctrl+l", "clear_log", "Clear log", show=False),
+        # PageUp/PageDown always page the conversation, even while the
+        # prompt holds focus — reading back during a running turn is the
+        # common case, and TextArea's own page keys only move its cursor.
+        Binding("pageup", "scroll_conversation('up')", "Scroll up", show=False,
+                priority=True),
+        Binding("pagedown", "scroll_conversation('down')", "Scroll down",
+                show=False, priority=True),
     ]
 
     title = "agentknit"
@@ -460,7 +512,7 @@ class AgentTUI(App):
         yield Header(show_clock=False)
         with Vertical():
             yield SelectableRichLog(id="conversation", highlight=False, markup=False,
-                                    wrap=True, auto_scroll=True,
+                                    wrap=True,
                                     classes="conversation-log")
             with Vertical(id="prompt-row"):
                 yield self.PromptInput(
@@ -853,7 +905,9 @@ class AgentTUI(App):
             # as "tokens of what's on screen".
             self._reset_usage_status()
             log.clear()
-            log.write(self._header_block())
+            # The pin rule cannot see "bottom" on an empty log the same way
+            # a fresh boot does; force the jump so the banner is in view.
+            log.write(self._header_block(), scroll_end=True)
             return
         if lowered == "/reset-context":
             # Route to the registry's real /clear handler, which resets the
@@ -1013,7 +1067,28 @@ class AgentTUI(App):
         self._reset_usage_status()
         log = self.query_one("#conversation", SelectableRichLog)
         log.clear()
-        log.write(self._header_block())
+        log.write(self._header_block(), scroll_end=True)
+
+    def action_scroll_conversation(self, direction: str) -> None:
+        """Page the conversation log without leaving the prompt.
+
+        Works mid-turn: paging up detaches from the end so streaming
+        output no longer drags the view back down; paging down re-attaches
+        once it reaches the bottom.
+        """
+        log = self._conversation_log()
+        page = log.scrollable_content_region.height
+        if direction == "up":
+            log.scroll_page_up(animate=False)
+        else:
+            # Page down from the current target; if less than a full page
+            # remains, snap to the bottom so the pin rule re-attaches (a
+            # plain page would stop short — content keeps growing while the
+            # reader is detached).
+            y = round(log.scroll_target_y) + page
+            if log.max_scroll_y - y < page:
+                y = log.max_scroll_y
+            log.scroll_to(y=y, animate=False)
 
     def _reset_usage_status(self) -> None:
         """Zero the token counters shown in the status bar.

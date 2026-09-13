@@ -913,3 +913,112 @@ def test_fit_line_truncates_at_line_end() -> None:
     assert _fit_line("exact-10!", 10) == "exact-10!"
     assert _fit_line("0123456789A", 10) == "012345678…"
     assert _fit_line("anything", 0) == ""
+
+
+def _wheel(log: Any, up: bool, times: int = 1) -> None:
+    """Fire mouse-wheel events at the log like a real scroll would."""
+    from textual import events
+
+    ev_cls = events.MouseScrollUp if up else events.MouseScrollDown
+    handler = log._on_mouse_scroll_up if up else log._on_mouse_scroll_down
+    for _ in range(times):
+        handler(ev_cls(widget=log, x=1, y=1, delta_x=0,
+                       delta_y=-1 if up else 1, button=0,
+                       shift=False, meta=False, ctrl=False))
+
+
+@pytest.mark.asyncio
+async def test_scrolled_up_view_survives_incoming_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scrolling up must detach from the end: new writes append without
+    yanking the viewport back down, and the reader keeps their position
+    while the agent keeps working."""
+    from agentknit_tui.app import AgentTUI
+
+    _patch_no_network(monkeypatch)
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", SelectableRichLog)
+        for i in range(200):
+            conv.write(f"line {i}")
+        await pilot.pause(0.2)
+        assert conv.scroll_y == conv.max_scroll_y  # pinned at boot
+
+        _wheel(conv, up=True, times=5)
+        await pilot.pause(0.2)
+        top = conv.scroll_y
+        assert top < conv.max_scroll_y  # detached
+
+        for i in range(50):
+            conv.write(f"fresh {i}")
+        await pilot.pause(0.2)
+        assert conv.scroll_y == top  # view held — this is the bug fix
+        assert conv.max_scroll_y > top
+
+        # Scrolling back down to the bottom re-attaches: the next write follows.
+        conv.scroll_to(y=conv.max_scroll_y, animate=False, duration=0, immediate=True)
+        await pilot.pause(0.2)
+        bottom = conv.max_scroll_y
+        conv.write("tail line")
+        await pilot.pause(0.2)
+        assert conv.scroll_y == conv.max_scroll_y
+        assert conv.scroll_y > bottom
+        app.exit()
+
+
+@pytest.mark.asyncio
+async def test_pinned_view_follows_streaming_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """At the bottom (default), writes keep the newest content in view."""
+    from agentknit_tui.app import AgentTUI
+
+    _patch_no_network(monkeypatch)
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", SelectableRichLog)
+        for i in range(200):
+            conv.write(f"line {i}")
+        await pilot.pause(0.2)
+        assert conv.scroll_y == conv.max_scroll_y  # never detached: follows
+        app.exit()
+
+
+@pytest.mark.asyncio
+async def test_pageup_pages_conversation_while_prompt_focused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PageUp/PageDown reach the conversation even with the prompt focused,
+    and a page-up detaches the view so writes stop pulling it down."""
+    from agentknit_tui.app import AgentTUI
+
+    _patch_no_network(monkeypatch)
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", SelectableRichLog)
+        for i in range(120):
+            conv.write(f"line {i}")
+        await pilot.pause(0.2)
+        assert conv.scroll_y == conv.max_scroll_y
+
+        assert app.focused is not None and app.focused.id == "prompt"
+        await pilot.press("pageup")
+        await pilot.pause(0.2)
+        assert conv.scroll_y < conv.max_scroll_y
+        top = conv.scroll_y
+
+        conv.write("streaming line while reading")
+        await pilot.pause(0.2)
+        assert conv.scroll_y == top  # not yanked back down
+
+        await pilot.press("pagedown")
+        await pilot.pause(0.2)
+        assert conv.scroll_y == conv.max_scroll_y  # re-attached
+        app.exit()

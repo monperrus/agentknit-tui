@@ -42,6 +42,13 @@ agentknit-tui --no-strict-cache-proof
 | `Ctrl+Shift+C`       | copy the mouse selection in the log          |
 | `Ctrl+L`             | clear the on-screen conversation log only |
 
+While reading: scrolling up (mouse wheel, or `PageUp` with the prompt
+focused) detaches the view from the end — new messages keep arriving in
+the log but no longer pull you back down, so you can keep reading while
+the agent works. Scrolling back to the bottom re-attaches the
+auto-follow. `PageDown` pages down and snaps to the end when a page
+away.
+
 ### Mouse
 
 - **Drag** over the conversation log selects text in place (highlighted as
