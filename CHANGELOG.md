@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- An exhausted provider quota reported as HTTP 403 (Kimi's Coding Plan
+  endpoint does this instead of 429) is now labelled `Quota: …` and shows
+  the provider's own message; agentknit waits through the window when the
+  provider says when it reopens, instead of ending the session on an
+  opaque `403 Client Error: Forbidden`.
+
 - Reading no longer fights the agent: scrolling the conversation up
   (mouse wheel or `PageUp`) detaches the view from the end, so new
   messages append silently instead of yanking you back to the bottom —

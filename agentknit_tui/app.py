@@ -585,9 +585,12 @@ class AgentTUI(App):
             except RateLimitError as exc:
                 # No retry-after info was given — the engine already stopped
                 # the loop instead of guessing a delay. Surface it plainly.
+                # HTTP 403 carries its own wording ("Quota exhausted …"),
+                # which providers like Kimi use for an exhausted window.
+                label = "Quota" if getattr(exc, "status_code", 429) == 403 else "Rate limited"
+                text = f"{label}: {exc}"
                 self._event_q.put(_QueuedEvent(
-                    "error", {"text": f"Rate limited: {exc}",
-                              "fmt": f"\033[31mRate limited: {exc}\033[0m"}))
+                    "error", {"text": text, "fmt": f"\033[31m{text}\033[0m"}))
             except Exception as exc:  # noqa: BLE001 — engine surfaces its own errors too
                 self._event_q.put(_QueuedEvent(
                     "error", {"text": str(exc),
