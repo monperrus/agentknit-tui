@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The prompt no longer goes dead while a turn runs: text submitted while
+  the agent is busy (e.g. blocked in a long subagent or shell call) is a
+  side question, answered from the conversation so far by agentknit's
+  `side_query` next to the running turn, which it leaves untouched.
+  Slash commands still wait for the turn to end.
+
 - An exhausted provider quota reported as HTTP 403 (Kimi's Coding Plan
   endpoint does this instead of 429) is now labelled `Quota: …` and shows
   the provider's own message; agentknit waits through the window when the

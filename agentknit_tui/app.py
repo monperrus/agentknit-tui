@@ -81,6 +81,9 @@ from ._history import PromptHistory
 if TYPE_CHECKING:
     from textual.events import Key
 
+# Side questions while a turn runs need agentknit's side_query; with an older
+# agentknit, input stays ignored while busy, as before.
+_side_query: Callable[..., str] | None = getattr(agentknit, "side_query", None)
 
 # ── event envelope ────────────────────────────────────────────────────────────
 
@@ -603,6 +606,26 @@ class AgentTUI(App):
             self._cancel_token = None
             self._event_q.put(None)  # sentinel: turn finished
 
+    @work(thread=True, group="side")
+    def _run_side_query(self, question: str) -> None:
+        """Answer a side question on its own thread, next to the running turn.
+
+        ``agentknit.side_query`` reads a snapshot of the session and never
+        writes to it, so the turn thread is unaffected.  The answer is
+        written straight to the log (not via the event queue, whose sentinel
+        belongs to the turn).
+        """
+        assert _side_query is not None
+        log = self.query_one("#conversation", SelectableRichLog)
+        try:
+            answer = _side_query(self._client, self._model_name, self._session,
+                                 question)
+            rendered: Any = self._render_assistant(answer or "(empty answer)",
+                                                   side=True)
+        except Exception as exc:  # noqa: BLE001 — shown, the turn goes on
+            rendered = Text(f"Side question failed: {exc}", style="red")
+        self.call_from_thread(log.write, rendered)
+
     # ── UI-thread drain loop ──────────────────────────────────────────────────
 
     def _drain_events(self) -> None:
@@ -883,7 +906,13 @@ class AgentTUI(App):
 
     def _handle_prompt_submitted(self, text: str) -> None:
         text = text.strip()
-        if not text or self.busy:
+        if not text:
+            return
+        # While a turn runs (e.g. blocked in a long tool call), plain text is
+        # a side question answered from the conversation so far; slash
+        # commands still wait for the turn to end.
+        side = self.busy
+        if side and (text.startswith("/") or _side_query is None):
             return
 
         # Reset the prompt for the next turn.
@@ -892,7 +921,12 @@ class AgentTUI(App):
         prompt.load_text("")
 
         log = self.query_one("#conversation", SelectableRichLog)
-        log.write(self._render_user(text))
+        log.write(self._render_user(text, side=side))
+
+        if side:
+            self._history.record(text)
+            self._run_side_query(text)
+            return
 
         # Persist for arrow-up recall in this folder (shared with the REPL).
         self._history.record(text)
@@ -1344,10 +1378,11 @@ class AgentTUI(App):
             ("type a task to get started\n", "dim blue"),
         )
 
-    def _render_user(self, text: str) -> Text:
-        return Text.assemble(("you\n", "bold green"), (text, ""))
+    def _render_user(self, text: str, *, side: bool = False) -> Text:
+        label = "you (side question)\n" if side else "you\n"
+        return Text.assemble((label, "bold green"), (text, ""))
 
-    def _render_assistant(self, text: str) -> Any:
+    def _render_assistant(self, text: str, *, side: bool = False) -> Any:
         # Render assistant prose as Markdown, flush-trimmed so copies carry
         # no padding (see _FlushMarkdown). Falls back to plain Text if the
         # MD parse fails.
@@ -1358,7 +1393,8 @@ class AgentTUI(App):
             body: Any = _FlushMarkdown(text, code_theme="ansi_dark")
         except Exception:  # noqa: BLE001
             body = Text(text)
-        return Group(Text(self._model_name, style="bold cyan"), body)
+        label = f"{self._model_name} (side answer)" if side else self._model_name
+        return Group(Text(label, style="bold cyan"), body)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
