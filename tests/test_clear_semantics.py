@@ -92,7 +92,9 @@ async def test_slash_clear_resets_status_bar_tokens(
         assert app.prompt_tokens == 0
         assert app.completion_tokens == 0
         assert app.cached_tokens == 0
-        assert "tokens" not in app.query_one("#status").content.plain
+        # The status bar always shows the token counter now; after /clear it
+        # reads zero (it mirrors what's on screen).
+        assert "0 tokens" in app.query_one("#status").content.plain
         # Session totals untouched.
         assert app._session["usage_totals"]["total"] == 1500
         app.exit()

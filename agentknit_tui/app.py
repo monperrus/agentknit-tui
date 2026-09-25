@@ -1023,10 +1023,19 @@ class AgentTUI(App):
                 return
 
     def action_cancel_or_quit(self) -> None:
-        # If the user has a text selection active in the conversation log,
-        # the copy chord should copy it rather than quit/cancel. Textual's
-        # built-in copy lives on a non-priority binding that our priority
-        # binding shadows, so we re-route here.
+        # If the user has a text selection active — in the conversation log
+        # *or in the focused prompt* — the copy chord should copy it rather
+        # than quit/cancel. Textual's built-in copy lives on a non-priority
+        # binding that our priority binding shadows, so we re-route here.
+        #
+        # The prompt comes first: a TextArea tracks its selection in its own
+        # `selection` reactive and never registers it in screen.selections
+        # (it clears screen selections on every cursor move), so
+        # `_selected_text` cannot see it.
+        focused = self.focused
+        if isinstance(focused, TextArea) and focused.selected_text:
+            self._copy_selection(focused.selected_text)
+            return
         selected = self._selected_text()
         if selected:
             self._copy_selection(selected)

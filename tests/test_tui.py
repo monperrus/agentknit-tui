@@ -485,6 +485,40 @@ async def test_drag_select_yields_character_range_and_copies(
 
 
 @pytest.mark.asyncio
+async def test_ctrl_c_copies_selection_from_the_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ctrl+C with text selected in the prompt copies it, not quit/cancel.
+
+    A TextArea keeps its selection in its own reactive and never registers
+    it in screen.selections (its cursor watcher even clears screen
+    selections), so the copy chord must consult the focused widget.
+    """
+    from agentknit_tui.app import AgentTUI
+
+    _patch_no_network(monkeypatch)
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        prompt = app.query_one("#prompt")
+        prompt.load_text("select me please")
+        prompt.cursor_location = (0, 0)
+        await pilot.pause()
+        # Grow a selection from the cursor: 12 chars of "select me pl".
+        for _ in range(12):
+            await pilot.press("shift+right")
+        await pilot.pause()
+        assert prompt.selected_text == "select me pl"
+        assert not app.screen.selections  # TextArea selections aren't there
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert app.clipboard == "select me pl"
+        assert app.is_running  # copied, not quit
+        app.exit()
+
+
+@pytest.mark.asyncio
 async def test_ctrl_c_without_selection_cancels_or_quits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
