@@ -3,14 +3,41 @@
 A [Textual](https://textual.textualize.io/) TUI front-end for
 [agentknit](https://github.com/monperrus/agentknit) coding agents.
 
-Features: 
-- one always-visible conversation pane
-- a multiline prompt at the bottom, 
-- tool calls / results / token accounting rendered
-inline
-- a live status bar. 
+Features unique to this harness (things Claude Code and Codex do not do):
 
-the TUI is a pure subscriber to the event stream from agentknit.
+- **Side questions.** Type while a turn is running and the prompt is
+  answered as a *side question* — a separate read-only LLM call over a
+  snapshot of the conversation, rendered next to the turn without
+  touching the turn's context or progress.
+- **Token-budget countdown at deciles.** The agent runs under a hard
+  token budget; the log prints `remaining/budget` only when usage
+  crosses into a new 10% band, instead of nagging after every call.
+- **Read-through streaming.** Scrolling up detaches the view from the
+  end: the agent keeps streaming into the log, but nothing yanks you
+  back down. Scrolling to the bottom re-attaches the follow.
+- **Paste-safe rendering.** No `│` gutters, no box-drawing borders, no
+  right-hand padding on any rendered line — copying a selection (or a
+  whole block) yields the payload text exactly.
+- **Per-folder prompt history shared with the REPL.** The TUI and the
+  agentknit REPL read and write the same per-directory history file, so
+  `↑` recalls prompts typed in either front-end, scoped to the folder
+  they were typed in.
+- **Quota vs rate-limit labeling.** HTTP 403 is reported as "Quota"
+  (exhausted window), 429 as "Rate limited" — providers that use 403
+  for quota are not misreported.
+- **Clipboard that works in VTE terminals.** Copy tries the platform
+  tool (`xclip`/`xsel`, `wl-copy`, `pbcopy`, `clip.exe`) *and* emits
+  OSC 52; one of the two reaches the system clipboard even in terminals
+  (Terminator, older gnome-terminal) that ignore OSC 52.
+- **Word-level diff highlighting.** `str_replace` edits render as
+  colorized unified diffs with the changed *words* inside each modified
+  line bolded on a dark background — a one-word change in a long line
+  is visible at a glance. Copied diff lines paste clean.
+
+Everything else is standard TUI furniture: one conversation pane, a
+multiline prompt, tool calls/results/token accounting inline, a live
+status bar. The TUI is a pure subscriber to the event stream from
+agentknit.
 
 ## Install
 
@@ -73,9 +100,10 @@ still reports the session's full totals.
 
 ### Status bar
 
-The line under the prompt shows the model, session id, token usage, and —
-while a turn is running — the task the agent is working on, wrapped over
-two terminal-width lines so long prompts stay readable.
+The line under the prompt always shows the model, working directory, and
+total tokens in the format `<model> - <working directory> - <tokens>`.
+While a turn is running, the task the agent is working on appears below it,
+wrapped over two terminal-width lines so long prompts stay readable.
 To reset the LLM context (session history, keeping the system prompt), run
 `/reset-context` in the TUI; it forwards to agentknit's `/clear` handler.
 

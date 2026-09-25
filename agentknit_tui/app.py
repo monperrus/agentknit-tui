@@ -1164,7 +1164,7 @@ class AgentTUI(App):
     # ── status bar ────────────────────────────────────────────────────────────
 
     class StatusBar(Label):
-        """The status bar under the prompt: model, session, tokens, task.
+        """The status bar under the prompt: model, working directory, tokens, task.
 
         Two lines when a turn is running: the summary row, then the running
         task wrapped across the full terminal width. One line when idle.
@@ -1204,18 +1204,16 @@ class AgentTUI(App):
 
     def _status_text(self) -> Text:
         parts = [Text(self.model, style="bold")]
-        parts.append(Text(" · ", style="dim"))
-        parts.append(Text(f"session {self.session_id}", style="dim"))
-        if self.prompt_tokens or self.completion_tokens:
-            usage_bits = [f"tokens {self.prompt_tokens + self.completion_tokens:,}"]
-            if self.cached_tokens:
-                total = self.prompt_tokens + self.completion_tokens
-                pct = (self.cached_tokens / total * 100) if total else 0
-                usage_bits.append(f"({self.cached_tokens:,} cached, {pct:.1f}%)")
-            parts.append(Text(" · ", style="dim"))
-            parts.append(Text(" ".join(usage_bits), style="cyan"))
+        parts.append(Text(" - ", style="dim"))
+        parts.append(Text(os.path.basename(os.getcwd()) or os.getcwd(), style="dim"))
+        total = self.prompt_tokens + self.completion_tokens
+        parts.append(Text(" - ", style="dim"))
+        parts.append(Text(f"{total:,} tokens", style="cyan"))
+        if self.cached_tokens:
+            pct = self.cached_tokens / total * 100 if total else 0
+            parts.append(Text(f" ({self.cached_tokens:,} cached, {pct:.1f}%)", style="cyan"))
         if self.busy:
-            parts.append(Text(" · ", style="dim"))
+            parts.append(Text(" - ", style="dim"))
             parts.append(Text("working…", style="yellow"))
         status = Text.assemble(*parts)
         if self.busy and self._current_task:
