@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
 import queue
 import shlex
@@ -34,6 +35,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -1313,10 +1315,22 @@ class AgentTUI(App):
         else:
             line_offset = locate_line(path, old, new=new, cwd=os.getcwd()) or 1
         body = render_str_replace(path, old, new, line_offset=line_offset)
-        return Group(
-            Text(f"⟨str_replace {path}⟩", style="bold magenta"),
-            body,
-        )
+        title = Text(f"⟨str_replace {path}⟩", style="bold magenta")
+        stamp = self._tool_time(data)
+        if stamp:
+            return Group(Text(stamp, style="dim"), title, body)
+        return Group(title, body)
+
+    @staticmethod
+    def _tool_time(data: dict) -> str:
+        """``HH:MM`` prefix for a tool event, empty when no timestamp."""
+        ts = data.get("ts") or data.get("started_at")
+        if not ts:
+            return ""
+        try:
+            return datetime.fromisoformat(str(ts)).strftime("%H:%M")
+        except ValueError:
+            return ""
 
     def _render_tool_result(self, data: dict) -> Any:
         """Render the full body of a streamed tool result.
@@ -1329,8 +1343,6 @@ class AgentTUI(App):
 
         Green when the command exited 0, red otherwise.
         """
-        import json
-
         name = data.get("name", "tool")
         raw = data.get("result") or ""
         if not isinstance(raw, str):
@@ -1365,7 +1377,9 @@ class AgentTUI(App):
 
         ok = returncode == 0
         colour = "green" if ok else "red"
-        title = f"⟨{name} output⟩" if body else f"⟨{name}: no output⟩"
+        stamp = self._tool_time(data)
+        prefix = f"{stamp} " if stamp else ""
+        title = f"{prefix}⟨{name} output⟩" if body else f"{prefix}⟨{name}: no output⟩"
         if not ok:
             # Escape the bracket: "[exit 2]" would parse as Rich markup.
             title += f" \\[exit {returncode}]"

@@ -585,10 +585,12 @@ async def test_streamed_tool_result_renders_full_output(
         await pilot.pause()
         app._event_q.put(_QueuedEvent("tool_call", {
             "name": "shell", "args": {"command": "ls"},
+            "ts": "2026-01-01T10:30:00",
             "fmt": "\033[36m▶ shell(command='ls')\033[0m",
         }))
         app._event_q.put(_QueuedEvent("tool_result", {
             "name": "shell", "result": payload, "streamed": True,
+            "ts": "2026-01-01T10:30:00",
             "fmt": "\033[2m  (output streamed above)\033[0m",
         }))
         app._event_q.put(None)
@@ -597,6 +599,8 @@ async def test_streamed_tool_result_renders_full_output(
         assert "(output streamed above)" not in text
         assert "file1.py" in text
         assert "file2.py" in text
+        # Tool lines carry their HH:MM timestamp
+        assert "10:30" in text
         # exit 0 renders green
         assert "green" in _log_colors(app)
         app.exit()
