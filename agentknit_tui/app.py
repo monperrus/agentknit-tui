@@ -547,10 +547,6 @@ class AgentTUI(App):
         log.write(Text(
             f"session {self.session_id} · log {_session_log_path(self._session)}",
             style="dim"))
-        log.write(Text(
-            "Enter submits · Shift/Ctrl/Alt+Enter newline · ↑/↓ history "
-            "· Esc cancels · Ctrl+Shift+C copies selection (or cancels) · /help · /exit",
-            style="dim italic"))
         log.write(Text(""))
 
         self.query_one("#prompt", AgentTUI.PromptInput).attach_history(self._history)
@@ -1380,10 +1376,7 @@ class AgentTUI(App):
         )
 
     def _header_block(self) -> Text:
-        return Text.assemble(
-            (self.title + "\n", "bold blue"),
-            ("type a task to get started\n", "dim blue"),
-        )
+        return Text(self.title + "\n", style="bold blue")
 
     def _render_user(self, text: str, *, side: bool = False) -> Text:
         label = "you (side question)\n" if side else "you\n"

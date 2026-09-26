@@ -106,7 +106,6 @@ async def test_boot_renders_header_and_tools(monkeypatch: pytest.MonkeyPatch) ->
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         text = _log_text(app)
-        assert "type a task to get started" in text
         assert "1 tools: read_file" in text
         assert "session" in text
         app.exit()
