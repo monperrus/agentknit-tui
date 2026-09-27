@@ -56,6 +56,43 @@ async def test_str_replace_call_renders_unified_diff(
 
 
 @pytest.mark.asyncio
+async def test_str_replace_path_is_a_clickable_file_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The diff header and title carry an OSC 8 link so terminals can open the file."""
+    import os
+    import socket
+
+    from agentknit_tui.app import AgentTUI, _QueuedEvent
+
+    _patch_no_network(monkeypatch)
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    old = "def area(r):\n    return 3.14 * r * r\n"
+    new = "def area(r):\n    return math.pi * r * r\n"
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app._event_q.put(_QueuedEvent("tool_call", {
+            "name": "str_replace",
+            "args": {"path": "geometry.py", "old_str": old, "new_str": new},
+            "fmt": "▶ str_replace(path='geometry.py', old_str='def area(r):…",
+        }))
+        app._event_q.put(None)
+        await _wait_for(app, lambda t: "  2 +  " in t and "math.pi" in t)
+
+        expected_uri = f"file://{socket.gethostname()}" + os.path.abspath("geometry.py")
+        log = app.query_one("#conversation", SelectableRichLog)
+        links = {
+            link
+            for line in log.lines for seg in line
+            if (link := getattr(seg.style, "link", None))
+        }
+        assert expected_uri in links
+        app.exit()
+
+
+@pytest.mark.asyncio
 async def test_other_tool_calls_still_use_engine_fmt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

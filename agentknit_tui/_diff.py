@@ -26,6 +26,8 @@ from __future__ import annotations
 import difflib
 import os
 import re
+import socket
+from urllib.parse import quote
 
 from rich.style import Style
 from rich.text import Text
@@ -53,6 +55,20 @@ _ADD_WORD = Style(color="green", bold=True, bgcolor="grey27")
 # One run of whitespace, or one run of non-whitespace: word diffs operate
 # on whole words while whitespace stays unstyled glue.
 _TOKEN_RE = re.compile(r"\s+|\S+")
+
+
+def file_link_uri(path: str, *, cwd: str | None = None) -> str:
+    """Build a ``file://`` URI so a terminal can turn *path* into an OSC 8 link.
+
+    Terminals that support OSC 8 (kitty, iTerm2, WezTerm, VS Code's
+    integrated terminal, Ghostty, …) render text carrying a
+    ``file://host/path`` style as clickable, opening or revealing the file
+    in the OS's default handler. The hostname is included because several
+    of them refuse to treat a hostless ``file:///path`` as local.
+    """
+    abspath = path if os.path.isabs(path) else os.path.join(cwd or os.getcwd(), path)
+    abspath = os.path.normpath(abspath)
+    return f"file://{socket.gethostname()}{quote(abspath)}"
 
 
 def _tokens(line: str) -> list[str]:
@@ -220,7 +236,8 @@ def with_file_context(path: str, old: str, new: str,
 
 def render_str_replace(path: str, old: str, new: str,
                        context: int = CONTEXT, *,
-                       line_offset: int = 1) -> Text:
+                       line_offset: int = 1,
+                       cwd: str | None = None) -> Text:
     """Build a colorized unified diff for one ``str_replace`` edit.
 
     The diff shows the edited region only — ``str_replace`` carries no
@@ -232,10 +249,15 @@ def render_str_replace(path: str, old: str, new: str,
     ``difflib.unified_diff`` text output: a content line starting with
     ``+``/``-`` must not be able to impersonate (or be eaten by) the
     diff's own markers.
+
+    The ``--- path`` / ``+++ path`` header carries an OSC 8 hyperlink to
+    the file (see :func:`file_link_uri`), so a terminal that supports it
+    lets the path be clicked open.
     """
     out = Text()
+    header_style = _HEADER + Style(link=file_link_uri(path, cwd=cwd))
     for header in (f"--- {path}", f"+++ {path}"):
-        out.append(header + "\n", style=_HEADER)
+        out.append(header + "\n", style=header_style)
 
     old_lines = old.splitlines()
     new_lines = new.splitlines()

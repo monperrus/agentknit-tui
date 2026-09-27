@@ -1327,15 +1327,24 @@ class AgentTUI(App):
         if not isinstance(old, str) or not isinstance(new, str):
             return self._ansi(data.get("fmt", ""))
 
-        from ._diff import locate_line, render_str_replace, with_file_context
+        from ._diff import (
+            file_link_uri,
+            locate_line,
+            render_str_replace,
+            with_file_context,
+        )
 
-        anchored = with_file_context(path, old, new, cwd=os.getcwd())
+        cwd = os.getcwd()
+        anchored = with_file_context(path, old, new, cwd=cwd)
         if anchored is not None:
             old, new, line_offset = anchored
         else:
-            line_offset = locate_line(path, old, new=new, cwd=os.getcwd()) or 1
-        body = render_str_replace(path, old, new, line_offset=line_offset)
-        title = Text(f"⟨str_replace {path}⟩", style="bold magenta")
+            line_offset = locate_line(path, old, new=new, cwd=cwd) or 1
+        body = render_str_replace(path, old, new, line_offset=line_offset, cwd=cwd)
+        title = Text("⟨str_replace ", style="bold magenta")
+        title.append(path, style=Style(color="magenta", bold=True,
+                                        link=file_link_uri(path, cwd=cwd)))
+        title.append("⟩", style="bold magenta")
         stamp = self._tool_time(data)
         if stamp:
             return Group(Text(stamp, style="dim"), title, body)
