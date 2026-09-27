@@ -369,6 +369,22 @@ class SelectableRichLog(RichLog):
         return _clean_selection_lines(out), "\n"
 
 
+def _cache_warmth_text(ttl: int, expires_in: float) -> str:
+    """Status-bar fragment for prefix-cache warmth, or "" when unknown.
+
+    ``expires_in`` is NaN until the first cache read/write is observed;
+    positive values count down the TTL, negative ones mean the cache is
+    surely expired (next turn re-writes the prompt prefix at full price).
+    """
+    import math
+    if expires_in is None or math.isnan(expires_in) or ttl <= 0:
+        return ""
+    if expires_in > 0:
+        m, s = divmod(int(expires_in), 60)
+        return f"cache {m}m{s:02d}s" if m else f"cache {s}s"
+    return "cache expired"
+
+
 # ── the app ───────────────────────────────────────────────────────────────────
 
 
@@ -450,6 +466,12 @@ class AgentTUI(App):
     completion_tokens: reactive[int] = reactive(0, layout=False)
     cached_tokens: reactive[int] = reactive(0, layout=False)
     compactions: reactive[int] = reactive(0, layout=False)
+    # Prefix-cache warmth mirror: TTL (s) and seconds left until the cache
+    # entry is expected to expire (negative → already expired).  `_warm`
+    # stays None until the first cache proof; the 30 s ticker keeps the
+    # countdown honest while the user idles.
+    cache_ttl: reactive[int] = reactive(0, layout=False)
+    cache_expires_in: reactive[float] = reactive(float("nan"), layout=False)
 
     def __init__(
         self,
@@ -529,6 +551,8 @@ class AgentTUI(App):
             yield self.StatusBar(id="status")
         # 50 ms timer to drain queued events from the worker thread.
         self.set_interval(0.05, self._drain_events)
+        # 30 s ticker: the cache-warmth countdown advances even while idle.
+        self.set_interval(30, self._tick_cache_warmth)
 
     def on_mount(self) -> None:
         display_name = self._schema.get("display_name") or f"agentknit {self._model_name}"
@@ -658,6 +682,10 @@ class AgentTUI(App):
                             ("cached", "cached_tokens")):
                 if k in data:
                     setattr(self, attr, int(data[k] or 0))
+            if data.get("cache_ttl") is not None:
+                self.cache_ttl = int(data["cache_ttl"])
+            if data.get("cache_expires_in") is not None:
+                self.cache_expires_in = float(data["cache_expires_in"])
             return
 
         # Each compaction restarts the context from a summary; count them so
@@ -1232,6 +1260,10 @@ class AgentTUI(App):
             parts.append(Text(f" ({self.cached_tokens:,} cached, {pct:.1f}%)", style="cyan"))
         if self.compactions:
             parts.append(Text(f" {self.compactions} comp.", style="cyan"))
+        warmth = _cache_warmth_text(self.cache_ttl, self.cache_expires_in)
+        if warmth:
+            style = "cyan" if self.cache_expires_in > 0 else "dim"
+            parts.append(Text(f" · {warmth}", style=style))
         if self.busy:
             parts.append(Text(" - ", style="dim"))
             parts.append(Text("working…", style="yellow"))
@@ -1302,6 +1334,15 @@ class AgentTUI(App):
 
     def watch_compactions(self, value: int) -> None:
         self._refresh_status()
+
+    def watch_cache_expires_in(self, value: float) -> None:
+        self._refresh_status()
+
+    def _tick_cache_warmth(self) -> None:
+        """Advance the cache countdown while the user idles."""
+        import math
+        if not math.isnan(self.cache_expires_in):
+            self.cache_expires_in = self.cache_expires_in - 30
 
     # ── rendering helpers ─────────────────────────────────────────────────────
 
