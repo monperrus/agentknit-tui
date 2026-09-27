@@ -8,6 +8,7 @@ Usage mirrors the ``agent-glm-5.2.py`` wrappers it replaces:
     agentknit-tui "<task>"              # prefill the prompt with the task
     agentknit-tui --session <id>        # resume a previous trajectory
     agentknit-tui --non-interactive     # drop ask_user* tools from the schema
+    agentknit-tui --non-interactive "<task>"  # one-shot: run, print, exit
 
 Wrapper scripts that already build their own schema can import the app
 directly::

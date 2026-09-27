@@ -493,6 +493,17 @@ class AgentTUI(App):
         self._max_output_tokens = max_output_tokens
         self._strict_cache_proof = strict_cache_proof
         self._prefill = prefill
+        # One-shot mode: `--non-interactive` together with a CLI task means
+        # no human is at the keyboard (pipes, ssh, cron) — submit the task
+        # on mount and quit when the turn ends, mirroring the REPL's
+        # one_shot_task semantics.
+        self._oneshot = bool(non_interactive and prefill and prefill.strip())
+        # Final answer of a one-shot turn, echoed to stdout after exit: the
+        # alt screen is torn down, so pipe/cron callers must get it plainly.
+        self._last_answer = ""
+        # Textual's App.run() delegates to run_async(), so both finally
+        # blocks run in one process — print the answer once, like the hint.
+        self._one_shot_answer_printed = False
 
         # Event plumbing — must exist *before* init_session: resuming a
         # session (--session <id>) emits `session_resumed` synchronously from
@@ -584,6 +595,13 @@ class AgentTUI(App):
             prompt.load_text(self._prefill)
             prompt.cursor_location = (0, len(self._prefill))
         prompt.focus()
+
+        if self._oneshot:
+            # No human at the keyboard: submit the prefilled task right away
+            # instead of waiting for an Enter that may never come (piped ssh,
+            # cron, supervisor). The turn ends via the queue sentinel, which
+            # exits the app in _end_turn_ui.
+            self.call_after_refresh(self._handle_prompt_submitted, self._prefill)
 
     # ── agentknit event subscription (runs on the worker thread) ──────────────
 
@@ -736,6 +754,7 @@ class AgentTUI(App):
 
         if et == "final_answer":
             text = (data.get("text") or "").strip()
+            self._last_answer = text
             # Streaming sessions already flushed the answer via content_delta;
             # avoid printing it twice.
             if text and not self._content_was_streamed_this_turn():
@@ -826,6 +845,12 @@ class AgentTUI(App):
         self._watch_current_task()
         self.query_one("#prompt", TextArea).focus()
         self.refresh()
+        if self._oneshot:
+            # The one-shot task has run to completion (or failure) — no
+            # further input is coming, so leave the TUI. The final answer is
+            # echoed to stdout by _print_one_shot_answer() after the driver
+            # tears down the alt screen.
+            self.exit()
 
     # ── input handling ────────────────────────────────────────────────────────
 
@@ -1140,13 +1165,30 @@ class AgentTUI(App):
         try:
             return super().run(*args, **kwargs)
         finally:
+            self._print_one_shot_answer()
             self._print_resume_hint()
 
     async def run_async(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
         try:
             return await super().run_async(*args, **kwargs)
         finally:
+            self._print_one_shot_answer()
             self._print_resume_hint()
+
+    def _print_one_shot_answer(self) -> None:
+        """Echo the one-shot answer on the plain console after the TUI exits.
+
+        The answer lived on the alt screen, which is gone by the time run()
+        returns; piped/cron callers must still get the text on stdout.
+        """
+        if not self._oneshot or not self._last_answer:
+            return
+        if self._one_shot_answer_printed:
+            # run() delegates to run_async(): the finally hooks fire twice —
+            # print once, like _print_resume_hint's guard.
+            return
+        self._one_shot_answer_printed = True
+        print(self._last_answer, flush=True)
 
     def action_maybe_cancel(self) -> None:
         if self._cancel_token is not None and not self._cancel_token.cancelled:

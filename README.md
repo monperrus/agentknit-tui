@@ -60,6 +60,7 @@ agentknit-tui glm-5.2
 agentknit-tui "qwen3-8b" "https://openrouter.ai/api/v1"
 agentknit-tui --session <id>        # resume a previous trajectory
 agentknit-tui --non-interactive     # drop ask_user* tools from the schema
+agentknit-tui --non-interactive "<task>"  # one-shot: run the task, print the answer, exit
 agentknit-tui --no-strict-cache-proof
 ```
 
