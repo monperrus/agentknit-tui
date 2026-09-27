@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `str_replace` and `write_file` diffs now show the file path as a
+  clickable OSC 8 hyperlink (in both the `--- path`/`+++ path` header and
+  the tool-call title), for terminals that support it (kitty, iTerm2,
+  WezTerm, VS Code's integrated terminal, Ghostty, …). `write_file` calls
+  also render as a diff now — an all-additions one, since there is no
+  "before" state to compare against — instead of the unreadable
+  `write_file(path=…, content='…')` repr dump.
+
 - The status bar now counts context compactions: after the token usage
   (and cache share), it shows `N comp.` — the number of times the context
   window was compacted this session, so the token counters dropping after
