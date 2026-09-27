@@ -32,7 +32,12 @@ Features unique to this harness (things Claude Code and Codex do not do):
 - **Word-level diff highlighting.** `str_replace` edits render as
   colorized unified diffs with the changed *words* inside each modified
   line bolded on a dark background — a one-word change in a long line
-  is visible at a glance. Copied diff lines paste clean.
+  is visible at a glance. `write_file` calls render the same way, as an
+  all-additions diff of the new content. Copied diff lines paste clean.
+- **Clickable file paths.** The path in a `str_replace`/`write_file`
+  diff header carries an OSC 8 hyperlink, so terminals that support it
+  (kitty, iTerm2, WezTerm, VS Code's integrated terminal, Ghostty, …)
+  let you open the edited file straight from the log.
 
 Everything else is standard TUI furniture: one conversation pane, a
 multiline prompt, tool calls/results/token accounting inline, a live
@@ -111,7 +116,7 @@ Slash commands (`/help`, `/usage`, `/clear`, `/compact`, `/model`, `/reset-conte
 are forwarded to agentknit's command registry; their printed output is
 captured and shown inline.
 
-### `str_replace` diffs
+### `str_replace`/`write_file` diffs
 
 Edits made through the `str_replace` tool are shown as a colorized unified
 diff instead of the tool's argument dump: deleted lines in red, added lines
@@ -119,7 +124,9 @@ in green, and the specific changed *words* within each modified line
 highlighted in bold on a dark background, so a one-word change inside a long
 line is visible at a glance. Each row carries the file's real line number
 plus the `+`/`-` marker, separated from the content by spaces only — no
-vertical-bar gutter, so copied diff lines paste clean.
+vertical-bar gutter, so copied diff lines paste clean. `write_file` calls
+render the same way with an empty "before" side, so the new content shows
+up as an all-green diff instead of a repr'd content blob.
 
 ```diff
 --- pkg/mod.py
@@ -133,6 +140,10 @@ vertical-bar gutter, so copied diff lines paste clean.
 +    print(greeting + " " + name)
      return None
 ```
+
+The `--- path`/`+++ path` header and the tool-call title both carry an
+OSC 8 hyperlink to the file, so a terminal that supports it renders the
+path as clickable.
 
 
 On exit the TUI prints the command to resume the session on the console,

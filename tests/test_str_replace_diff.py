@@ -1,4 +1,4 @@
-"""The TUI renders str_replace calls as a colorized unified diff, not a repr."""
+"""The TUI renders str_replace/write_file calls as a colorized diff, not a repr."""
 
 from __future__ import annotations
 
@@ -93,10 +93,77 @@ async def test_str_replace_path_is_a_clickable_file_link(
 
 
 @pytest.mark.asyncio
+async def test_write_file_call_renders_all_additions_diff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agentknit_tui.app import AgentTUI, _QueuedEvent
+
+    _patch_no_network(monkeypatch)
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    content = "def area(r):\n    return math.pi * r * r\n"
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app._event_q.put(_QueuedEvent("tool_call", {
+            "name": "write_file",
+            "args": {"path": "geometry.py", "content": content},
+            "fmt": "▶ write_file(path='geometry.py', content='def area(r):…",
+        }))
+        app._event_q.put(None)
+        await _wait_for(app, lambda t: "math.pi" in t)
+
+        text = _log_text(app)
+        assert "--- geometry.py" in text
+        assert "+++ geometry.py" in text
+        assert "1 +  def area(r):" in text
+        # The repr blob from fmt is replaced entirely.
+        assert "content=" not in text
+        # write_file has no "before": every line is an addition, never a deletion.
+        colors = _log_colors(app)
+        assert "green" in colors
+        assert "red" not in colors
+        app.exit()
+
+
+@pytest.mark.asyncio
+async def test_write_file_path_is_a_clickable_file_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+    import socket
+
+    from agentknit_tui.app import AgentTUI, _QueuedEvent
+
+    _patch_no_network(monkeypatch)
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app._event_q.put(_QueuedEvent("tool_call", {
+            "name": "write_file",
+            "args": {"path": "notes.md", "content": "hello\n"},
+            "fmt": "▶ write_file(path='notes.md', content='hello\\n')",
+        }))
+        app._event_q.put(None)
+        await _wait_for(app, lambda t: "hello" in t)
+
+        expected_uri = f"file://{socket.gethostname()}" + os.path.abspath("notes.md")
+        log = app.query_one("#conversation", SelectableRichLog)
+        links = {
+            link
+            for line in log.lines for seg in line
+            if (link := getattr(seg.style, "link", None))
+        }
+        assert expected_uri in links
+        app.exit()
+
+
+@pytest.mark.asyncio
 async def test_other_tool_calls_still_use_engine_fmt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Only str_replace is rewritten; read_file keeps the generic renderer."""
+    """Only str_replace/write_file are rewritten; read_file keeps the generic renderer."""
     from agentknit_tui.app import AgentTUI, _QueuedEvent
 
     _patch_no_network(monkeypatch)

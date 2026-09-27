@@ -754,6 +754,11 @@ class AgentTUI(App):
                 # `repr()` of old_str/new_str is unreadable; show a real diff.
                 log.write(self._render_str_replace_call(data))
                 return
+            if et == "tool_call" and data.get("name") == "write_file":
+                # `repr()` of the content arg is unreadable; show the file
+                # written, as an all-additions diff with a clickable path.
+                log.write(self._render_write_file_call(data))
+                return
             log.write(self._ansi(fmt))
             return
 
@@ -1327,12 +1332,7 @@ class AgentTUI(App):
         if not isinstance(old, str) or not isinstance(new, str):
             return self._ansi(data.get("fmt", ""))
 
-        from ._diff import (
-            file_link_uri,
-            locate_line,
-            render_str_replace,
-            with_file_context,
-        )
+        from ._diff import locate_line, render_str_replace, with_file_context
 
         cwd = os.getcwd()
         anchored = with_file_context(path, old, new, cwd=cwd)
@@ -1341,14 +1341,48 @@ class AgentTUI(App):
         else:
             line_offset = locate_line(path, old, new=new, cwd=cwd) or 1
         body = render_str_replace(path, old, new, line_offset=line_offset, cwd=cwd)
-        title = Text("⟨str_replace ", style="bold magenta")
-        title.append(path, style=Style(color="magenta", bold=True,
-                                        link=file_link_uri(path, cwd=cwd)))
-        title.append("⟩", style="bold magenta")
+        title = self._linked_title("str_replace", path, cwd)
         stamp = self._tool_time(data)
         if stamp:
             return Group(Text(stamp, style="dim"), title, body)
         return Group(title, body)
+
+    def _render_write_file_call(self, data: dict) -> Any:
+        """Render a ``write_file`` tool call as an all-additions diff.
+
+        The engine's generic formatter prints `write_file(path=…,
+        content='…')` with a repr()-quoted body, unreadable for anything
+        past a few characters. Reuse the ``str_replace`` diff renderer with
+        an empty ``old`` side, so the file's new content shows up the way
+        an insertion-only edit would: green lines, capped, with a clickable
+        path.
+        """
+        args = data.get("args") or {}
+        path = str(args.get("path") or "?")
+        content = args.get("content")
+        if not isinstance(content, str):
+            return self._ansi(data.get("fmt", ""))
+
+        from ._diff import render_str_replace
+
+        cwd = os.getcwd()
+        body = render_str_replace(path, "", content, cwd=cwd)
+        title = self._linked_title("write_file", path, cwd)
+        stamp = self._tool_time(data)
+        if stamp:
+            return Group(Text(stamp, style="dim"), title, body)
+        return Group(title, body)
+
+    @staticmethod
+    def _linked_title(tool: str, path: str, cwd: str) -> Text:
+        """``⟨tool path⟩`` with *path* carrying an OSC 8 link to the file."""
+        from ._diff import file_link_uri
+
+        title = Text(f"⟨{tool} ", style="bold magenta")
+        title.append(path, style=Style(color="magenta", bold=True,
+                                        link=file_link_uri(path, cwd=cwd)))
+        title.append("⟩", style="bold magenta")
+        return title
 
     @staticmethod
     def _tool_time(data: dict) -> str:
