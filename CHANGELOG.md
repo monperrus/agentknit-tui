@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The status bar now counts context compactions: after the token usage
+  (and cache share), it shows `N comp.` — the number of times the context
+  window was compacted this session, so the token counters dropping after
+  a summary is not read as data loss. Hidden while the count is zero.
+
 - The prompt no longer goes dead while a turn runs: text submitted while
   the agent is busy (e.g. blocked in a long subagent or shell call) is a
   side question, answered from the conversation so far by agentknit's

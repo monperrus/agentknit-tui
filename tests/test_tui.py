@@ -295,6 +295,43 @@ async def test_usage_goes_to_status_bar_not_log(
 
 
 @pytest.mark.asyncio
+async def test_compaction_count_in_status_bar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Compaction events bump a counter shown in the status bar, not the log."""
+    from agentknit_tui.app import AgentTUI, _QueuedEvent
+
+    _patch_no_network(monkeypatch, final_text="done")
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    def status_plain() -> str:
+        content = app.query_one("#status", AgentTUI.StatusBar).content
+        return content.plain if hasattr(content, "plain") else str(content)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        # No compactions yet: the counter stays hidden.
+        assert "comp." not in status_plain()
+        app._event_q.put(_QueuedEvent("compaction", {
+            "compacted_turns": 42, "summary": "…",
+            "fmt": "\033[35m[compaction] 42 turns summarized\033[0m",
+        }))
+        app._event_q.put(None)
+        await _wait_for_log(app, lambda t: "42 turns summarized" in t)
+        assert "1 comp." in status_plain()
+        # A second compaction increments, it does not reset.
+        app._event_q.put(_QueuedEvent("compaction", {
+            "compacted_turns": 3, "summary": "…",
+            "fmt": "\033[35m[compaction] 3 turns summarized\033[0m",
+        }))
+        app._event_q.put(None)
+        await _wait_for_log(app, lambda t: "3 turns summarized" in t)
+        assert "2 comp." in status_plain()
+        assert "1 comp." not in status_plain()
+        app.exit()
+
+
+@pytest.mark.asyncio
 async def test_budget_line_shown_only_on_decile_crossing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

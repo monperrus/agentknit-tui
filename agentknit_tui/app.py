@@ -449,6 +449,7 @@ class AgentTUI(App):
     prompt_tokens: reactive[int] = reactive(0, layout=False)
     completion_tokens: reactive[int] = reactive(0, layout=False)
     cached_tokens: reactive[int] = reactive(0, layout=False)
+    compactions: reactive[int] = reactive(0, layout=False)
 
     def __init__(
         self,
@@ -657,6 +658,19 @@ class AgentTUI(App):
                             ("cached", "cached_tokens")):
                 if k in data:
                     setattr(self, attr, int(data[k] or 0))
+            return
+
+        # Each compaction restarts the context from a summary; count them so
+        # the status bar can show how many times the window was recycled.
+        if et == "compaction":
+            self.compactions += 1
+            self._last_budget_decile = None
+            if fmt:
+                log.write(self._ansi(fmt))
+            else:
+                log.write(Text(
+                    f"[compaction] {data.get('compacted_turns', 0)} turns "
+                    "summarized", style="magenta"))
             return
 
         # The `[budget]` countdown fires on every LLM call; echo it to the
@@ -1146,6 +1160,7 @@ class AgentTUI(App):
         self.prompt_tokens = 0
         self.completion_tokens = 0
         self.cached_tokens = 0
+        self.compactions = 0
 
     # ── status bar / watchers ─────────────────────────────────────────────────
 
@@ -1210,6 +1225,8 @@ class AgentTUI(App):
         if self.cached_tokens:
             pct = self.cached_tokens / total * 100 if total else 0
             parts.append(Text(f" ({self.cached_tokens:,} cached, {pct:.1f}%)", style="cyan"))
+        if self.compactions:
+            parts.append(Text(f" {self.compactions} comp.", style="cyan"))
         if self.busy:
             parts.append(Text(" - ", style="dim"))
             parts.append(Text("working…", style="yellow"))
@@ -1276,6 +1293,9 @@ class AgentTUI(App):
         self._refresh_status()
 
     def watch_cached_tokens(self, value: int) -> None:
+        self._refresh_status()
+
+    def watch_compactions(self, value: int) -> None:
         self._refresh_status()
 
     # ── rendering helpers ─────────────────────────────────────────────────────
