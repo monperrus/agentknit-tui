@@ -32,7 +32,6 @@ dependencies = [
 Homepage = "https://github.com/monperrus/agentknit-tui"
 Repository = "https://github.com/monperrus/agentknit-tui"
 Issues = "https://github.com/monperrus/agentknit-tui/issues"
-Changelog = "https://github.com/monperrus/agentknit-tui/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 test = ["pytest>=7", "pytest-asyncio>=0.23", "pytest-cov>=4"]
