@@ -33,6 +33,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -119,6 +120,21 @@ _TUI_CLI_NAMES = frozenset({"agentknit-tui"})
 
 # Fallback width for the status bar's task line before the first layout pass.
 _STATUS_FALLBACK_WIDTH = 80
+# Braille spinner for the "working…" line above the prompt (as Claude Code).
+_SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+_SPINNER_INTERVAL = 0.1
+
+
+def _activity_text(frame: int, elapsed: float) -> Text:
+    """The busy line above the prompt: spinner, label, elapsed time, hint."""
+    spin = _SPINNER_FRAMES[frame % len(_SPINNER_FRAMES)]
+    secs = int(elapsed)
+    took = f"{secs // 60}m{secs % 60:02d}s" if secs >= 60 else f"{secs}s"
+    return Text.assemble(
+        (f"{spin} ", "bold yellow"),
+        ("working…", "yellow"),
+        (f" ({took} · Esc to cancel)", "dim"),
+    )
 
 
 # ── copy-safe markdown ────────────────────────────────────────────────────────
@@ -406,6 +422,16 @@ class AgentTUI(App):
         border: round $accent;
     }
 
+    #activity {
+        width: 1fr;
+        height: 1;
+        padding: 0 1;
+        display: none;
+    }
+    #activity.-busy {
+        display: block;
+    }
+
     #prompt-row {
         height: auto;
         padding: 0 1 0 0;
@@ -553,6 +579,7 @@ class AgentTUI(App):
             yield SelectableRichLog(id="conversation", highlight=False, markup=False,
                                     wrap=True,
                                     classes="conversation-log")
+            yield Label(id="activity")
             with Vertical(id="prompt-row"):
                 yield self.PromptInput(
                     "", id="prompt", classes="PromptInput", soft_wrap=True,
@@ -564,6 +591,11 @@ class AgentTUI(App):
         self.set_interval(0.05, self._drain_events)
         # 30 s ticker: the cache-warmth countdown advances even while idle.
         self.set_interval(30, self._tick_cache_warmth)
+        # Spinner timer, paused while idle (resumed by watch_busy).
+        self._spinner_frame = 0
+        self._busy_since = time.monotonic()
+        self._spinner_timer = self.set_interval(
+            _SPINNER_INTERVAL, self._tick_spinner, pause=True)
 
     def on_mount(self) -> None:
         display_name = self._schema.get("display_name") or f"agentknit {self._model_name}"
@@ -1243,7 +1275,32 @@ class AgentTUI(App):
         self.sub_title = (f"{self._model_name} · working…"
                           if busy else self._model_name)
         self._refresh_status()
+        self._update_activity(busy)
         self.refresh()
+
+    def _update_activity(self, busy: bool) -> None:
+        """Show/animate the spinner line above the prompt while a turn runs."""
+        try:
+            activity = self.query_one("#activity", Label)
+        except Exception:
+            return
+        activity.set_class(busy, "-busy")
+        timer = getattr(self, "_spinner_timer", None)
+        if busy:
+            self._busy_since = time.monotonic()
+            self._spinner_frame = 0
+            activity.update(_activity_text(0, 0))
+            if timer is not None:
+                timer.resume()
+        elif timer is not None:
+            timer.pause()
+
+    def _tick_spinner(self) -> None:
+        if not self.busy:
+            return
+        self._spinner_frame += 1
+        self.query_one("#activity", Label).update(_activity_text(
+            self._spinner_frame, time.monotonic() - self._busy_since))
 
     def _watch_current_task(self) -> None:
         """`_current_task` is plain state (not reactive); refresh when set."""
@@ -1306,9 +1363,6 @@ class AgentTUI(App):
         if warmth:
             style = "cyan" if self.cache_expires_in > 0 else "dim"
             parts.append(Text(f" · {warmth}", style=style))
-        if self.busy:
-            parts.append(Text(" - ", style="dim"))
-            parts.append(Text("working…", style="yellow"))
         status = Text.assemble(*parts)
         if self.busy and self._current_task:
             status.append("\n")

@@ -916,7 +916,16 @@ async def test_status_bar_shows_running_task(
         app.busy = True
         app._current_task = "fix the failing login test"
         app._watch_current_task()
-        assert "working" in status_plain()
+        await pilot.pause()
+        # "working…" lives on the animated line above the prompt, not the bar.
+        activity = app.query_one("#activity")
+        assert activity.display
+        assert activity.region.y < app.query_one("#prompt").region.y
+        assert "working" in activity.content.plain
+        assert "working" not in status_plain()
+        frame0 = activity.content.plain[0]
+        app._tick_spinner()
+        assert activity.content.plain[0] != frame0  # the spinner moves
         assert "fix the failing login test" in status_plain()
 
         # The task sits on its own second line, no truncation at 120 cols.
@@ -936,7 +945,6 @@ async def test_status_bar_shows_running_task(
         assert long_task not in shown
         lines = shown.splitlines()
         assert len(lines) == 3  # summary + two full-width task lines
-        assert lines[0].endswith("working…")
         assert lines[1].startswith("word word")
         assert len(lines[1]) <= width
         assert len(lines[2]) <= width
@@ -977,6 +985,8 @@ async def test_status_bar_shows_running_task(
         app.busy = False
         assert "first line" not in status_plain()
         assert "working" not in status_plain()
+        await pilot.pause()
+        assert not app.query_one("#activity").display
         app.exit()
 
 
