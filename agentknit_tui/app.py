@@ -126,14 +126,14 @@ _SPINNER_INTERVAL = 0.1
 
 
 def _activity_text(frame: int, elapsed: float) -> Text:
-    """The busy line above the prompt: spinner, label, elapsed time, hint."""
+    """The busy line above the prompt: spinner, label, elapsed time."""
     spin = _SPINNER_FRAMES[frame % len(_SPINNER_FRAMES)]
     secs = int(elapsed)
     took = f"{secs // 60}m{secs % 60:02d}s" if secs >= 60 else f"{secs}s"
     return Text.assemble(
         (f"{spin} ", "bold yellow"),
         ("working…", "yellow"),
-        (f" ({took} · Esc to cancel)", "dim"),
+        (f" ({took})", "dim"),
     )
 
 
