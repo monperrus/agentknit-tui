@@ -25,6 +25,7 @@ Ctrl+C / Escape / stop binding so a turn can be interrupted cooperatively.
 from __future__ import annotations
 
 import contextlib
+import inspect
 import io
 import json
 import os
@@ -87,6 +88,10 @@ if TYPE_CHECKING:
 # Side questions while a turn runs need agentknit's side_query; with an older
 # agentknit, input stays ignored while busy, as before.
 _side_query: Callable[..., str] | None = getattr(agentknit, "side_query", None)
+
+# Who a non-operator turn is from (agent-inbox) goes to run_turn(sender=); an
+# agentknit without it runs the turn without the sender rather than failing.
+_RUN_TURN_TAKES_SENDER = "sender" in inspect.signature(agentknit.run_turn).parameters
 
 # ── event envelope ────────────────────────────────────────────────────────────
 
@@ -642,18 +647,21 @@ class AgentTUI(App):
         self._event_q.put(_QueuedEvent(event_type, data))
 
     @work(thread=True, exclusive=True, group="turn")
-    def _run_turn(self, task: str | None) -> None:
+    def _run_turn(self, task: str | None,
+                  sender: dict[str, str] | None = None) -> None:
         """Run one agentknit turn on a background thread."""
         self._cancel_token = CancelToken()
         # Pause the global signal-based SIGINT handler while a turn runs in
         # a thread: it kills subprocesses directly and would race with the
         # textual event loop. We rely on the CancelToken instead.
         prev_sigint = _steal_sigint()
+        extra: dict[str, Any] = (
+            {"sender": sender} if sender and _RUN_TURN_TAKES_SENDER else {})
         try:
             try:
                 agentknit.run_turn(
                     self._client, self._model_name, self._session, task,
-                    cancel=self._cancel_token,
+                    cancel=self._cancel_token, **extra,
                 )
             except KeyboardInterrupt:
                 # Cancellation or a real interrupt — surface a notice.
@@ -1078,8 +1086,13 @@ class AgentTUI(App):
         # Real turn.
         self._begin_turn(text)
 
-    def _begin_turn(self, task: str | None) -> None:
+    def _begin_turn(self, task: str | None,
+                    sender: dict[str, str] | None = None) -> None:
         """Set busy state and kick off `task` (or a `/c` retry) as a turn.
+
+        `sender` ({"kind", "name"}) says who the turn is from when it is not
+        the operator (e.g. an inbox message); it goes to agentknit's
+        ``run_turn(sender=)`` when the engine takes it.
 
         `_current_task` first: watch_busy refreshes the status bar
         synchronously and must already see the running task.
@@ -1089,7 +1102,10 @@ class AgentTUI(App):
         self._content_buf = []
         self._reasoning_buf = []
         self._streamed_content = False
-        self._run_turn(task)
+        if sender:
+            self._run_turn(task, sender)
+        else:
+            self._run_turn(task)
 
     @on(PromptSubmitted)
     def _on_prompt_submitted(self, message: PromptSubmitted) -> None:
