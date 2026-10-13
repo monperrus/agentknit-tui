@@ -15,7 +15,6 @@ import pytest
 
 from agentknit_tui.app import _cache_warmth_text
 
-
 # ── formatter ────────────────────────────────────────────────────────────────
 
 def test_warmth_empty_before_first_cache_proof() -> None:
