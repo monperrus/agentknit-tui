@@ -645,7 +645,11 @@ class AgentTUI(App):
     @work(thread=True, exclusive=True, group="turn")
     def _run_turn(self, task: str | None,
                   sender: dict[str, str] | None = None) -> None:
-        """Run one agentknit turn on a background thread."""
+        """Run one agentknit turn on a background thread.
+
+        `sender` is who wrote `task` when it is not the operator (an inbox
+        post, a supervisor); agentknit records it and heads the message.
+        """
         self._cancel_token = CancelToken()
         # Pause the global signal-based SIGINT handler while a turn runs in
         # a thread: it kills subprocesses directly and would race with the
