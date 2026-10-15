@@ -555,11 +555,6 @@ class AgentTUI(App):
         # final_answer can skip re-printing text that was already streamed.
         self._streamed_content: bool = False
 
-        # Last 10% band of the token budget seen (0..10); the `[budget]`
-        # countdown is echoed to the log only when usage crosses into a new
-        # decile, not after every LLM call.
-        self._last_budget_decile: int | None = None
-
         self._client = create_client(schema)
         self._history = PromptHistory()
         self._resume_hint_printed = False
@@ -750,7 +745,6 @@ class AgentTUI(App):
         # the status bar can show how many times the window was recycled.
         if et == "compaction":
             self.compactions += 1
-            self._last_budget_decile = None
             if fmt:
                 log.write(self._ansi(fmt))
             else:
@@ -759,16 +753,9 @@ class AgentTUI(App):
                     "summarized", style="magenta"))
             return
 
-        # The `[budget]` countdown fires on every LLM call; echo it to the
-        # log only when usage crosses into a new decile of the budget (i.e.
-        # another 10% of the window was consumed since the last line), so
-        # it stays informative instead of repeating after each message.
+        # The remaining token budget is for the model, not the human: never
+        # echo it.
         if et == "token_budget":
-            if self._budget_decile_crossed(data):
-                log.write(self._ansi(fmt) if fmt else Text(
-                    f"[budget] {data.get('remaining', 0):,}/"
-                    f"{data.get('budget', 0):,} tokens remaining",
-                    style="magenta"))
             return
 
         if et == "content_delta":
@@ -856,27 +843,6 @@ class AgentTUI(App):
 
     def _content_was_streamed_this_turn(self) -> bool:
         return self._streamed_content
-
-    def _budget_decile_crossed(self, data: dict) -> bool:
-        """True when usage crossed into a new decile of the token budget.
-
-        The engine emits ``token_budget`` after every LLM call; printing it
-        each time drowns the conversation. We show the countdown once per
-        10% band of the budget, re-arming when usage drops back (after a
-        compaction or a context reset).
-        """
-        try:
-            used = int(data.get("used", 0) or 0)
-            budget = int(data.get("budget", 0) or 0)
-        except (TypeError, ValueError):
-            return False
-        if budget <= 0:
-            return False
-        decile = min(10, used * 10 // budget)
-        crossed = (self._last_budget_decile is not None
-                   and decile != self._last_budget_decile)
-        self._last_budget_decile = decile
-        return crossed
 
     def _end_turn_ui(self) -> None:
         self.busy = False

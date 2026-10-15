@@ -332,57 +332,30 @@ async def test_compaction_count_in_status_bar(
 
 
 @pytest.mark.asyncio
-async def test_budget_line_shown_only_on_decile_crossing(
+async def test_budget_line_never_shown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The `[budget]` countdown echoes to the log only when usage crosses a decile.
-
-    agentknit emits `token_budget` after every LLM call; printing it each
-    time drowns the conversation. Within one 10% band of the budget the
-    line is suppressed; entering the next band shows it exactly once.
-    """
+    """The remaining token budget is for the model, not the human."""
     from agentknit_tui.app import AgentTUI, _QueuedEvent
 
     _patch_no_network(monkeypatch, final_text="done")
     app = AgentTUI(_make_schema(), non_interactive=True)
 
-    def budget_ev(used: int) -> _QueuedEvent:
-        remaining = max(0, 100_000 - used)
-        return _QueuedEvent("token_budget", {
-            "used": used, "budget": 100_000, "remaining": remaining,
-            "fmt": f"\033[35m[budget] {remaining:,}/100,000 tokens remaining\033[0m",
-        })
-
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-
-        def marker(text: str) -> _QueuedEvent:
-            return _QueuedEvent("final_answer", {"text": text})
-
-        # First sighting (5%) establishes the baseline silently; 9% stays in
-        # the same decile. The trailing marker renders only after both
-        # budget events were drained (the queue is FIFO).
-        app._event_q.put(budget_ev(5_000))
-        app._event_q.put(budget_ev(9_000))
-        app._event_q.put(marker("phase one done"))
+        for used in (5_000, 12_000, 95_000):
+            remaining = 100_000 - used
+            app._event_q.put(_QueuedEvent("token_budget", {
+                "used": used, "budget": 100_000, "remaining": remaining,
+                "fmt": f"[budget] {remaining:,}/100,000 tokens remaining",
+            }))
+        app._event_q.put(_QueuedEvent("final_answer", {"text": "all done"}))
         app._event_q.put(None)
-        await _wait_for_log(app, lambda t: "phase one done" in t)
+        await _wait_for_log(app, lambda t: "all done" in t)
         await pilot.pause()
         text = _log_text(app)
-        assert "95,000/100,000 tokens remaining" not in text
-        assert "91,000/100,000 tokens remaining" not in text
-        # Crossing into the next decile (12%): shown once; 13% is the same
-        # band again, so it stays silent.
-        app._event_q.put(budget_ev(12_000))
-        app._event_q.put(budget_ev(13_000))
-        app._event_q.put(marker("phase two done"))
-        app._event_q.put(None)
-        await _wait_for_log(app, lambda t: "phase two done" in t)
-        await pilot.pause()
-        text = _log_text(app)
-        assert text.count("tokens remaining") == 1
-        assert "88,000/100,000 tokens remaining" in text
-        assert "87,000/100,000 tokens remaining" not in text
+        assert "tokens remaining" not in text
+        assert "[budget]" not in text
         app.exit()
 
 
