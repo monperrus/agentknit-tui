@@ -64,6 +64,7 @@ from rich.markdown import (
     Paragraph,
     TableElement,
 )
+from rich.rule import Rule
 from rich.segment import Segment
 from rich.style import Style
 from rich.syntax import Syntax
@@ -1574,9 +1575,15 @@ class AgentTUI(App):
     def _header_block(self) -> Text:
         return Text(self.title + "\n", style="bold blue")
 
-    def _render_user(self, text: str, *, side: bool = False) -> Text:
-        label = "you (side question)\n" if side else "you\n"
-        return Text.assemble((label, "bold green"), (text, ""))
+    def _render_user(self, text: str, *, side: bool = False) -> Any:
+        """The operator's prompt: dated label, framed by a rule above and below."""
+        stamp = datetime.now().strftime("%H:%M")
+        label = f"you (side question) {stamp}\n" if side else f"you {stamp}\n"
+        return Group(
+            Rule(style="dim green"),
+            Text.assemble((label, "bold green"), (text, "")),
+            Rule(style="dim green"),
+        )
 
     def _render_assistant(self, text: str, *, side: bool = False) -> Any:
         # Render assistant prose as Markdown, flush-trimmed so copies carry
@@ -1628,6 +1635,8 @@ def _clean_selection_lines(lines: list[str]) -> str:
         stripped = ln.rstrip()
         if stripped.lstrip()[:1] in "╭╰┌└╶╰":
             continue  # border row (top/bottom edge, with any title)
+        if stripped and not stripped.strip("─"):
+            continue  # horizontal rule framing a prompt
         if stripped[:1] in _PANEL_VBORDERS:
             stripped = stripped[1:]
             if stripped[:1] == " ":

@@ -54,6 +54,26 @@ def test_plain_lines_pass_through_untouched() -> None:
         "plain text\n  indented\ncode → ok"
 
 
+def test_prompt_rules_are_dropped() -> None:
+    lines = ["─" * 40, "you 14:03", "hello", "─" * 40]
+    assert _clean_selection_lines(lines) == "you 14:03\nhello"
+
+
+def test_user_prompt_is_dated_and_framed() -> None:
+    import re
+
+    from rich.console import Console
+
+    from agentknit_tui.app import AgentTUI
+
+    con = Console(width=30, record=True, file=open("/dev/null", "w"))
+    con.print(AgentTUI._render_user(object.__new__(AgentTUI), "hello"))
+    rows = con.export_text().splitlines()
+    assert set(rows[0]) == {"─"} and set(rows[-1]) == {"─"}
+    assert re.fullmatch(r"you \d\d:\d\d", rows[1])
+    assert rows[2] == "hello"
+
+
 def test_degenerate_inputs() -> None:
     assert _clean_selection_lines([]) == ""
     assert _clean_selection_lines(["x"]) == "x"
