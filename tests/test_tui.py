@@ -528,6 +528,94 @@ async def test_ctrl_c_copies_selection_from_the_prompt(
 
 
 @pytest.mark.asyncio
+async def test_ctrl_shift_c_emits_osc52(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ctrl+Shift+C with a selection writes an OSC 52 escape to the driver.
+
+    The copy chord is routed through the app's ``on_key`` handler (not the
+    TextArea widget binding), so it must always emit OSC 52 via
+    ``App.copy_to_clipboard`` — this is the only clipboard channel that
+    works on terminals without xclip/xsel/wl-copy.
+    """
+    from textual.selection import Selection
+
+    from agentknit_tui.app import AgentTUI
+
+    _patch_no_network(monkeypatch)
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    writes: list[str] = []
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", SelectableRichLog)
+        conv.write("osc52 test")
+        await pilot.pause()
+        from textual.geometry import Offset
+
+        for y, strip in enumerate(conv.lines):
+            row = strip.text
+            if "osc52 test" in row:
+                col = row.index("osc52")
+                app.screen.selections = {
+                    conv: Selection(Offset(col, y),
+                                    Offset(col + len("osc52"), y))
+                }
+                break
+        else:
+            pytest.fail("expected row not found in conversation log")
+        await pilot.pause()
+        # Capture driver writes so we can verify the OSC 52 escape.
+        assert app._driver is not None
+        original_write = app._driver.write
+        app._driver.write = lambda data: (writes.append(data), original_write(data))[1]
+        await pilot.press("ctrl+shift+c")
+        await pilot.pause()
+        assert app.clipboard == "osc52"
+        # The driver must have received the OSC 52 escape (base64 payload).
+        assert any("\x1b]52;c;" in w for w in writes)
+        app.exit()
+
+
+@pytest.mark.asyncio
+async def test_ctrl_shift_c_in_prompt_emits_osc52(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ctrl+Shift+C in the prompt TextArea also emits OSC 52.
+
+    TextArea's built-in ``ctrl+c`` binding calls ``app.copy_to_clipboard``
+    directly; the app's ``on_key`` handler must intercept the chord so the
+    OSC 52 escape is emitted even when the prompt holds the selection.
+    """
+    from agentknit_tui.app import AgentTUI
+
+    _patch_no_network(monkeypatch)
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    writes: list[str] = []
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        prompt = app.query_one("#prompt")
+        prompt.load_text("prompt osc52")
+        prompt.cursor_location = (0, 0)
+        await pilot.pause()
+        for _ in range(12):
+            await pilot.press("shift+right")
+        await pilot.pause()
+        assert prompt.selected_text == "prompt osc52"
+        assert app._driver is not None
+        original_write = app._driver.write
+        app._driver.write = lambda data: (writes.append(data), original_write(data))[1]
+        await pilot.press("ctrl+shift+c")
+        await pilot.pause()
+        assert app.clipboard == "prompt osc52"
+        assert any("\x1b]52;c;" in w for w in writes)
+        app.exit()
+
+
+@pytest.mark.asyncio
 async def test_ctrl_c_without_selection_cancels_or_quits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -930,6 +930,19 @@ class AgentTUI(App):
             # to TextArea's default key handling.
             await super()._on_key(event)
 
+        def action_copy(self) -> None:
+            """Copy selection to clipboard via the app's OSC 52 path.
+
+            TextArea's built-in ``ctrl+c`` binding calls
+            ``app.copy_to_clipboard`` directly, which skips the platform
+            clipboard-tool fallback. Route it through ``_copy_selection`` so
+            Ctrl+C and Ctrl+Shift+C behave identically.
+            """
+            selected_text = self.selected_text
+            if selected_text:
+                self.app._copy_selection(selected_text)  # type: ignore[attr-defined]
+                self.screen.clear_selection()
+
         # ── history navigation ────────────────────────────────────────────────
 
         def _history_prev(self) -> bool:
@@ -982,8 +995,22 @@ class AgentTUI(App):
     def on_key(self, event: Key) -> None:
         # Key handling for the prompt lives on PromptInput itself (it must
         # override TextArea._on_key, which consumes bare Enter before app-level
-        # handlers run). Nothing to do here; kept for future global shortcuts.
-        return
+        # handlers run). Here we handle the global Ctrl+Shift+C copy chord so
+        # the OSC 52 escape is emitted even when a child widget (TextArea)
+        # would swallow the raw key before our app-level binding fires.
+        if event.key == "ctrl+shift+c":
+            focused = self.focused
+            text: str | None = None
+            if isinstance(focused, TextArea) and focused.selected_text:
+                text = focused.selected_text
+            else:
+                text = self._selected_text()
+            if text:
+                self._copy_selection(text)
+                self.screen.clear_selection()
+                event.prevent_default()
+                event.stop()
+            return
 
     def _handle_prompt_submitted(self, text: str) -> None:
         text = text.strip()
@@ -1087,11 +1114,11 @@ class AgentTUI(App):
     def _copy_selection(self, text: str) -> None:
         """Copy ``text`` to the system clipboard.
 
-        ``App.copy_to_clipboard`` only writes an OSC 52 escape and hopes the
-        terminal stack honors it — VTE-based terminals (Terminator, older
-        gnome-terminal) silently ignore it, so the copy vanishes. Fall back
-        to the platform clipboard tool when one is available (xclip/xsel,
-        wl-copy, pbcopy, clip.exe); if none is, keep the OSC 52 route.
+        ``App.copy_to_clipboard`` already emits an OSC 52 escape and sets the
+        in-app clipboard. VTE-based terminals (Terminator, older
+        gnome-terminal) silently ignore OSC 52, so fall back to the platform
+        clipboard tool when one is available (xclip/xsel, wl-copy, pbcopy,
+        clip.exe); if none is, keep the OSC 52 route.
         """
         self.copy_to_clipboard(text)
         for tool, args in (
