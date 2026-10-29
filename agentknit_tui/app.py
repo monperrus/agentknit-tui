@@ -82,6 +82,7 @@ from textual.strip import Strip
 from textual.widgets import Header, Label, RichLog, TextArea
 
 from ._history import PromptHistory
+from ._mail import linkify_bare_emails
 
 if TYPE_CHECKING:
     from textual.events import Key
@@ -1659,8 +1660,10 @@ class AgentTUI(App):
         try:
             # code_theme=ansi_*: transparent background — the syntax renderer
             # pads lines to full width otherwise (copy-hostile padding), and
-            # ANSI colors keep the TUI's own palette.
-            body: Any = _FlushMarkdown(text, code_theme="ansi_dark")
+            # ANSI colors keep the TUI's own palette. Bare email addresses
+            # become mailto: links so terminals render them clickable (OSC 8).
+            body: Any = _FlushMarkdown(linkify_bare_emails(text),
+                                       code_theme="ansi_dark")
         except Exception:  # noqa: BLE001
             body = Text(text)
         label = f"{self._model_name} (side answer)" if side else self._model_name

@@ -79,6 +79,18 @@ def _log_colors(app: Any) -> set[str]:
     return colors
 
 
+def _log_links(app: Any) -> dict[str, str]:
+    """Map of visible text → OSC 8 link URI for the conversation log."""
+    links: dict[str, str] = {}
+    log = app.query_one("#conversation")
+    for line in log.lines:
+        for seg in line:
+            link = getattr(seg.style, "link", None)
+            if link:
+                links[seg.text.strip()] = link
+    return links
+
+
 async def _wait_for_log(
     app: Any, predicate: Any, *, timeout: float = 5.0, interval: float = 0.05
 ) -> None:
@@ -429,6 +441,48 @@ async def test_budget_line_never_shown(
         text = _log_text(app)
         assert "tokens remaining" not in text
         assert "[budget]" not in text
+        app.exit()
+
+
+@pytest.mark.asyncio
+async def test_mailto_links_end_to_end(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OSC 8 mailto: links survive the full event → render → log pipeline.
+
+    End to end: a turn's streamed answer is linkified (bare addresses
+    become mailto: links) and rendered as Markdown, and the segments in
+    the conversation log carry the link style Textual turns into an
+    OSC 8 hyperlink sequence for the terminal.
+    """
+    from agentknit_tui.app import AgentTUI, _QueuedEvent
+
+    _patch_no_network(monkeypatch, final_text="unused")
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    answer = (
+        "Inline: ping [Martin](mailto:martin@example.org).\n"
+        "Bare: contact ops@example.net today.\n"
+        "Code: `git config user.email dev@example.com` stays plain.\n"
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app._event_q.put(_QueuedEvent("content_delta", {"text": answer}))
+        app._event_q.put(_QueuedEvent("content_stream_end", {}))
+        app._event_q.put(_QueuedEvent("final_answer", {"text": answer}))
+        app._event_q.put(None)
+        await _wait_for_log(app, lambda t: "ops@example.net" in t)
+        await pilot.pause()
+
+        links = _log_links(app)
+        # Inline and bare addresses are clickable, pointing at mailto:.
+        assert links.get("Martin") == "mailto:martin@example.org"
+        assert links.get("ops@example.net") == "mailto:ops@example.net"
+        # Addresses in code spans are data, not links.
+        assert "dev@example.com" not in links
+        # The answer printed exactly once (streamed, not re-printed).
+        assert _log_text(app).count("ops@example.net") == 1
         app.exit()
 
 
