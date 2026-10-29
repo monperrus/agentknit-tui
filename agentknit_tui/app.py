@@ -69,7 +69,7 @@ from rich.segment import Segment
 from rich.style import Style
 from rich.syntax import Syntax
 from rich.table import Table
-from rich.text import Text
+from rich.text import Span, Text
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -174,6 +174,19 @@ class _FlushMarkdown(Markdown):
     class _Paragraph(Paragraph):
         def __rich_console__(self, console: Console, options: Any) -> RenderResult:
             self.text.justify = "default"
+            # Rich carries a link's URL as Style(link=…) with no visual
+            # styling, so a link looks exactly like its surroundings and
+            # the operator cannot tell it is clickable (terminals only
+            # decorate links on hover). Underline link text so it reads
+            # as a link at a glance. Rich Spans are frozen dataclasses, so
+            # rebuild the span list rather than mutate in place.
+            self.text.spans = [
+                Span(span.start, span.end,
+                     span.style + Style(underline=True)
+                     if isinstance(span.style, Style) and span.style.link
+                     else span.style)
+                for span in self.text.spans
+            ]
             yield self.text
 
     class _Heading(Heading):

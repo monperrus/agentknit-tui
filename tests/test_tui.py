@@ -91,6 +91,18 @@ def _log_links(app: Any) -> dict[str, str]:
     return links
 
 
+def _screen_link_styles(app: Any) -> list[tuple[str, Any]]:
+    """(link URI, style) of every on-screen cell that carries a link —
+    the *composited* style the operator actually sees."""
+    out: list[tuple[str, Any]] = []
+    for y in range(app.screen.size.height):
+        for x in range(app.screen.size.width):
+            style = app.screen.get_style_at(x, y)
+            if style and style.link:
+                out.append((style.link, style))
+    return out
+
+
 async def _wait_for_log(
     app: Any, predicate: Any, *, timeout: float = 5.0, interval: float = 0.05
 ) -> None:
@@ -481,6 +493,11 @@ async def test_mailto_links_end_to_end(
         assert links.get("ops@example.net") == "mailto:ops@example.net"
         # Addresses in code spans are data, not links.
         assert "dev@example.com" not in links
+        # Links are visibly styled (underlined) so the operator can tell
+        # they are clickable — a terminal only decorates links on hover.
+        on_screen = _screen_link_styles(app)
+        assert on_screen, "no link cells on screen"
+        assert all(style.underline for _, style in on_screen)
         # The answer printed exactly once (streamed, not re-printed).
         assert _log_text(app).count("ops@example.net") == 1
         app.exit()
