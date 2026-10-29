@@ -487,6 +487,34 @@ async def test_mailto_links_end_to_end(
 
 
 @pytest.mark.asyncio
+async def test_mailto_headers_survive_end_to_end(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """mailto: links with ?subject=/&body=/&from= parameters keep the full
+    URI through linkify → markdown render → the log's OSC 8 link styles."""
+    from agentknit_tui.app import AgentTUI, _QueuedEvent
+
+    _patch_no_network(monkeypatch, final_text="unused")
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    uri = ("mailto:martin@example.org?from=me@mine.io"
+           "&subject=Bug%20report&body=Hello%20there")
+    answer = f"Report it: [mail the maintainer]({uri})."
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app._event_q.put(_QueuedEvent("content_delta", {"text": answer}))
+        app._event_q.put(_QueuedEvent("content_stream_end", {}))
+        app._event_q.put(_QueuedEvent("final_answer", {"text": answer}))
+        app._event_q.put(None)
+        await _wait_for_log(app, lambda t: "mail the maintainer" in t)
+        await pilot.pause()
+
+        assert _log_links(app).get("mail the maintainer") == uri
+        app.exit()
+
+
+@pytest.mark.asyncio
 async def test_awareness_checklist_never_shown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

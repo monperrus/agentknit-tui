@@ -28,6 +28,17 @@ def test_autolink_angle_brackets_untouched() -> None:
         assert linkify_bare_emails(src) == src
 
 
+def test_mailto_with_headers_untouched() -> None:
+    """mailto: URIs with ?subject/&body/&cc pass through verbatim — they are
+    already links, so the linkifier must not re-wrap or truncate them."""
+    for src in (
+        "[mail me](mailto:martin@example.org?subject=Bug%20report&body=Hi%20there)",
+        "[cc](mailto:a@b.co?cc=x@y.zz&from=me@mine.io&subject=Hi)",
+        "<mailto:martin@example.org?subject=Hello>",
+    ):
+        assert linkify_bare_emails(src) == src
+
+
 def test_inline_code_untouched() -> None:
     src = "run `git config user.email a@b.co` first"
     assert linkify_bare_emails(src) == src
