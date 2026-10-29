@@ -167,7 +167,11 @@ async def test_resume_session_survives_sync_event_from_init_session(
                    "(3 messages in context)\033[0m",
         })
         return {"session_id": resumed_from, "model": schema["model"],
-                "messages": [{"role": "user", "content": "hi"}] * 3,
+                "messages": [{"role": "system", "content": "you are…"},
+                             {"role": "user", "content": "hi",
+                              "ts": "2026-10-28T09:12:00+02:00"},
+                             {"role": "assistant", "content": "hello there",
+                              "ts": "2026-10-28T09:12:05+02:00"}],
                 "log_path": "/tmp/does-not-matter.jsonl"}
 
     monkeypatch.setattr(appmod, "init_session", fake_init_session)
@@ -179,6 +183,75 @@ async def test_resume_session_survives_sync_event_from_init_session(
         text = _log_text(app)
         assert "3 messages in context" in text
         assert app.session_id == "4e55afe7c1ce"
+        app.exit()
+
+
+@pytest.mark.asyncio
+async def test_resume_replays_previous_messages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--session <id>` shows the recovered conversation above the fold.
+
+    The replay rebuilds from ``session["messages"]`` (the source the model
+    will see): system prompt excluded, user prompts stripped of their
+    model-facing envelope, assistant tool calls rendered with their tool
+    results, and the original message times on the labels.
+    """
+
+    import agentknit_tui.app as appmod
+    from agentknit_tui.app import AgentTUI
+
+    _patch_no_network(monkeypatch)
+
+    history = [
+        {"role": "system", "content": "You are a terse agent."},
+        {"role": "user",
+         "content": "fix the flaky test\n\n<session_time>session elapsed: "
+                    "5s · last tool: n/a · wall since your previous message: "
+                    "n/a</session_time>",
+         "ts": "2026-10-28T09:00:00+02:00"},
+        {"role": "assistant", "content": "Looking at it now.",
+         "ts": "2026-10-28T09:00:10+02:00"},
+        {"role": "assistant",
+         "tool_calls": [{"id": "call_1", "type": "function",
+                         "function": {"name": "exec_shell",
+                                      "arguments": '{"command":"pytest -q"}'}}],
+         "ts": "2026-10-28T09:00:12+02:00"},
+        {"role": "tool", "tool_call_id": "call_1",
+         "content": '{"stdout":"1 passed","stderr":"","returncode":0}',
+         "ts": "2026-10-28T09:00:15+02:00"},
+        {"role": "assistant", "content": "All green — done.",
+         "ts": "2026-10-28T09:00:20+02:00"},
+    ]
+
+    def fake_init_session(schema: dict, *, on_event: Any = None,
+                          resumed_from: str | None = None, **_: Any) -> dict:
+        on_event("session_resumed", {
+            "session_id": resumed_from,
+            "messages_loaded": len(history),
+            "fmt": "\033[2mResumed session\033[0m",
+        })
+        return {"session_id": resumed_from, "model": schema["model"],
+                "messages": list(history),
+                "log_path": "/tmp/does-not-matter.jsonl"}
+
+    monkeypatch.setattr(appmod, "init_session", fake_init_session)
+    app = AgentTUI(_make_schema(), non_interactive=True, session_id="4e55afe7c1ce")
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        await _wait_for_log(app, lambda t: "All green" in t)
+        text = _log_text(app)
+        # Conversation replayed…
+        assert "fix the flaky test" in text
+        assert "Looking at it now." in text
+        assert "exec_shell" in text and "1 passed" in text
+        assert "All green — done." in text
+        # …with the original message times, not the replay's.
+        assert "you 09:00" in text
+        # …and without the model-facing envelope or the system prompt.
+        assert "session_time" not in text
+        assert "terse agent" not in text
         app.exit()
 
 

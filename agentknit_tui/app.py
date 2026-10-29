@@ -49,7 +49,7 @@ from agentknit import (
     load_specification,
 )
 from agentknit import _core as _ak_core
-from agentknit._core import _build_resume_cmd
+from agentknit._core import _TA_WARNING_RE, _build_resume_cmd, fmt_call
 from agentknit.exceptions import RateLimitError
 from agentknit.slash_commands import REGISTRY as _slash_registry
 from rich import box
@@ -118,6 +118,14 @@ _PASSTHROUGH_EVENTS = {
     "session_resumed",
     "token_limit",
 }
+
+# Resume replay rebuilds the log from the resumed session's *messages*, not
+# from journal `event` records: tool_start/tool_end are checkpoint records
+# about side-effect state, not the transcript (some providers inject text
+# blocks into tool content), so assistant tool_calls + tool messages are the
+# faithful pairing.
+_REPLAY_CAP = 4000
+_REPLAY_TAIL_MSG = "… earlier history in session log"
 
 # Executable names that take the model as a positional argument, so the
 # resume command must repeat it. Anything else (a wrapper script embedding
@@ -732,6 +740,11 @@ class AgentTUI(App):
         et, data = ev.event_type, ev.data
         fmt = data.get("fmt")
 
+        if et == "session_resumed" and self._session_id_in:
+            # Rebuild the conversation the session was resumed with, so the
+            # operator sees the previous turns, not a bare "resumed" line.
+            self._replay_resumed_history(log)
+
         # Mirror usage totals into the status bar, then suppress the
         # per-message `[tokens]` line — usage lives in the status bar only.
         if et in ("usage", "session_usage"):
@@ -829,14 +842,8 @@ class AgentTUI(App):
             if et == "tool_result" and data.get("streamed"):
                 log.write(self._render_tool_result(data))
                 return
-            if et == "tool_call" and data.get("name") == "str_replace":
-                # `repr()` of old_str/new_str is unreadable; show a real diff.
-                log.write(self._render_str_replace_call(data))
-                return
-            if et == "tool_call" and data.get("name") == "write_file":
-                # `repr()` of the content arg is unreadable; show the file
-                # written, as an all-additions diff with a clickable path.
-                log.write(self._render_write_file_call(data))
+            if et == "tool_call":
+                log.write(self._render_tool_call(data))
                 return
             log.write(self._ansi(fmt))
             return
@@ -1467,6 +1474,22 @@ class AgentTUI(App):
             return segments[0]
         return Group(*segments)
 
+    def _render_tool_call(self, data: dict) -> Any:
+        """Render one ``tool_call`` event (live or replayed from history).
+
+        File-editing tools get the readable diff view; everything else falls
+        back to the engine's pre-rendered one-liner.
+        """
+        name = data.get("name")
+        if name == "str_replace":
+            # `repr()` of old_str/new_str is unreadable; show a real diff.
+            return self._render_str_replace_call(data)
+        if name == "write_file":
+            # `repr()` of the content arg is unreadable; show the file
+            # written, as an all-additions diff with a clickable path.
+            return self._render_write_file_call(data)
+        return self._ansi(data.get("fmt", ""))
+
     def _render_str_replace_call(self, data: dict) -> Any:
         """Render a ``str_replace`` tool call as a colorized unified diff.
 
@@ -1606,10 +1629,16 @@ class AgentTUI(App):
     def _header_block(self) -> Text:
         return Text(self.title + "\n", style="bold blue")
 
-    def _render_user(self, text: str, *, side: bool = False) -> Any:
-        """The operator's prompt: dated label, framed by a rule above and below."""
-        stamp = datetime.now().strftime("%H:%M")
-        label = f"you (side question) {stamp}\n" if side else f"you {stamp}\n"
+    def _render_user(self, text: str, *, side: bool = False,
+                     stamp: str | None = None) -> Any:
+        """The operator's prompt: dated label, framed by a rule above and below.
+
+        *stamp* overrides the label's ``HH:MM`` (resume replay shows the
+        message's original time, not the replay's).
+        """
+        stamp = stamp if stamp is not None else datetime.now().strftime("%H:%M")
+        stamp = f" {stamp}" if stamp else ""
+        label = f"you (side question){stamp}\n" if side else f"you{stamp}\n"
         return Group(
             Rule(style="dim green"),
             Text.assemble((label, "bold green"), (text, "")),
@@ -1629,6 +1658,132 @@ class AgentTUI(App):
             body = Text(text)
         label = f"{self._model_name} (side answer)" if side else self._model_name
         return Group(Text(label, style="bold cyan"), body)
+
+    # ── resume replay ─────────────────────────────────────────────────────────
+
+    def _replay_resumed_history(self, log: RichLog) -> None:
+        """Write the resumed session's previous messages into the log.
+
+        Runs once, off the ``session_resumed`` event, after init_session has
+        installed the recovered history (snapshot, possibly upgraded by the
+        journal replay) into ``session["messages"]``. The live event stream
+        is transient (streamed deltas, "(output streamed above)"), so the
+        replay rebuilds from the messages themselves — the same source the
+        model will see.
+
+        The session's first message is the system prompt; everything before
+        the first non-system message is setup, not conversation.
+        """
+        messages = self._session.get("messages") or []
+        convo = [m for m in messages if m.get("role") != "system"]
+        if not convo:
+            return
+        # A tool message names only its call_id; the tool's name lives on the
+        # assistant message that issued the call.
+        call_names = {
+            str(call.get("id")): (call.get("function") or {}).get("name", "tool")
+            for m in convo if m.get("role") == "assistant"
+            for call in (m.get("tool_calls") or [])
+        }
+        if len(convo) > _REPLAY_CAP:
+            skipped = len(convo) - _REPLAY_CAP
+            convo = convo[-_REPLAY_CAP:]
+            log.write(Text(
+                f"… {skipped} earlier messages omitted "
+                f"(full history in the session log)", style="dim italic"))
+        for msg in convo:
+            rendered = self._render_replayed_message(msg, call_names)
+            if rendered is not None:
+                log.write(rendered)
+
+    def _render_replayed_message(self, msg: dict, call_names: dict) -> Any | None:
+        """One recovered history message as it would have rendered live."""
+        role = msg.get("role")
+        ts = str(msg.get("ts") or "")
+        if role == "user":
+            content = msg.get("content")
+            if not isinstance(content, str) or not content.strip():
+                return None
+            # Engine-appended recovery notes (pending-tool warnings, crash
+            # digests) are for the model, not something the operator typed.
+            if content.startswith("SYSTEM RECOVERY NOTE:"):
+                return None
+            return self._render_user(_human_side_of_user_message(content),
+                                     stamp=_hhmm_of(ts))
+        if role == "assistant":
+            content = msg.get("content")
+            parts: list[Any] = []
+            if isinstance(content, str) and content.strip():
+                parts.append(self._render_assistant(content.strip()))
+            for call in msg.get("tool_calls") or []:
+                fn = (call or {}).get("function") or {}
+                name = fn.get("name")
+                if not name:
+                    continue
+                args = _tool_call_args(fn.get("arguments"))
+                parts.append(self._render_tool_call({
+                    "name": name, "args": args, "ts": ts,
+                    "fmt": fmt_call(name, args, ts),
+                }))
+            if not parts:
+                return None
+            return parts[0] if len(parts) == 1 else Group(*parts)
+        if role == "tool":
+            content = msg.get("content")
+            text = content if isinstance(content, str) else str(content or "")
+            return self._render_tool_result({
+                "name": call_names.get(str(msg.get("tool_call_id")), "tool"),
+                "result": text, "ts": ts,
+            })
+        return None
+
+
+def _hhmm_of(iso_ts: str) -> str:
+    """``HH:MM`` from an ISO timestamp, empty string when unparseable."""
+    if not iso_ts:
+        return ""
+    try:
+        return datetime.fromisoformat(iso_ts).strftime("%H:%M")
+    except ValueError:
+        return ""
+
+
+def _human_side_of_user_message(content: str) -> str:
+    """Strip the engine's model-facing envelope from a stored user message.
+
+    The journaled user message carries what the model saw: the operator's
+    text plus a sender header (non-operator turns), a ``<session_time>``
+    timing line and stale ``<system_warning>`` token counters. The operator
+    typed none of that, so the replay shows the prompt as it was submitted.
+    """
+    text = content
+    # Trailing model-facing preambles are appended after the human text.
+    cut = len(text)
+    for marker in ("\n<session_time>", "\n<ground_moved>", "\n[supervisor ",
+                   "\n[launcher ", "\n[peer ", "\n[agent session "):
+        idx = text.find(marker)
+        if idx != -1:
+            cut = min(cut, idx)
+    text = text[:cut]
+    # A non-operator sender header is prepended as a bracketed first line.
+    if text.startswith("[") and "\n" in text:
+        first, rest = text.split("\n", 1)
+        if first.rstrip().endswith("not typed by the operator]"):
+            text = rest
+    return _TA_WARNING_RE.sub("", text).strip()
+
+
+def _tool_call_args(raw: Any) -> dict:
+    """Parse a tool_call's ``arguments`` (JSON string) into a dict."""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
