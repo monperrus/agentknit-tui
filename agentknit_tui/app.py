@@ -776,6 +776,13 @@ class AgentTUI(App):
         if et == "token_budget":
             return
 
+        # The startup awareness checklist ("👤 user awareness: ✅ …") frames
+        # the session for the console REPL; the TUI carries that state in
+        # its own chrome, and on resume it just repeats flags the operator
+        # already saw when the session started — so it never renders.
+        if et == "awareness_checklist":
+            return
+
         if et == "content_delta":
             self._streamed_content = True
             self._content_buf.append(data.get("text", ""))

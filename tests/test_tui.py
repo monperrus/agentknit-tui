@@ -433,6 +433,80 @@ async def test_budget_line_never_shown(
 
 
 @pytest.mark.asyncio
+async def test_awareness_checklist_never_shown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The startup situational-awareness checklist is console-REPL chrome —
+    the TUI never prints it, on a fresh session or on resume."""
+    from agentknit_tui.app import AgentTUI, _QueuedEvent
+
+    _patch_no_network(monkeypatch, final_text="done")
+    app = AgentTUI(_make_schema(), non_interactive=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app._event_q.put(_QueuedEvent("awareness_checklist", {
+            "status": {"user": True, "system": True, "git": True,
+                       "time": True, "token": True, "change": False},
+            "fmt": ("👤 user awareness: ✅\n"
+                    "🖥️ system awareness: ✅\n"
+                    "🔀 git awareness: ✅\n"
+                    "⏱️ time awareness: ✅\n"
+                    "🪙 token awareness: ✅\n"
+                    "👀 change awareness: ❌"),
+        }))
+        app._event_q.put(_QueuedEvent("final_answer", {"text": "all done"}))
+        app._event_q.put(None)
+        await _wait_for_log(app, lambda t: "all done" in t)
+        await pilot.pause()
+        text = _log_text(app)
+        assert "awareness" not in text
+        app.exit()
+
+
+@pytest.mark.asyncio
+async def test_resume_session_checklist_suppressed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Resuming (--session <id>) replays the conversation without the
+    awareness checklist that init_session emits for the REPL."""
+
+    import agentknit_tui.app as appmod
+    from agentknit_tui.app import AgentTUI
+
+    _patch_no_network(monkeypatch)
+
+    def fake_init_session(schema: dict, *, on_event: Any = None,
+                          resumed_from: str | None = None, **_: Any) -> dict:
+        on_event("session_resumed", {
+            "session_id": resumed_from, "messages_loaded": 2,
+            "fmt": "\033[2mResumed session\033[0m",
+        })
+        on_event("awareness_checklist", {
+            "status": {"user": True},
+            "fmt": "👤 user awareness: ✅",
+        })
+        return {"session_id": resumed_from, "model": schema["model"],
+                "messages": [{"role": "system", "content": "you are…"},
+                             {"role": "user", "content": "hi",
+                              "ts": "2026-10-28T09:12:00+02:00"}],
+                "log_path": "/tmp/does-not-matter.jsonl"}
+
+    monkeypatch.setattr(appmod, "init_session", fake_init_session)
+    app = AgentTUI(_make_schema(), non_interactive=True,
+                   session_id="4e55afe7c1ce")
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await _wait_for_log(app, lambda t: "hi" in t)
+        await pilot.pause()
+        text = _log_text(app)
+        assert "hi" in text
+        assert "awareness" not in text
+        app.exit()
+
+
+@pytest.mark.asyncio
 async def test_rate_limit_wait_is_shown_in_conversation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
