@@ -163,3 +163,35 @@ async def test_ctrl_c_copies_the_selection_instead_of_quitting(
         assert copied == ["alpha"]
         assert app.is_running
         app.exit()
+
+
+@pytest.mark.asyncio
+async def test_same_line_drag_on_a_scrolled_log(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: on a bottom-pinned (scrolled) log a one-line drag selected
+    an empty slice, so nothing could be copied.
+
+    Textual maps a drag through the ``offset`` metadata in the rendered
+    strips, which the compositor caches per scroll position; once the log
+    has scrolled those offsets point at the wrong column.
+    """
+    app = _make_app(monkeypatch)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        log = app.query_one("#conversation")
+        log.clear()
+        for i in range(40):
+            log.write(Text(f"line {i} alpha beta gamma delta"))
+        await pilot.pause()
+        assert log.scroll_y > 0  # the log really is scrolled
+        # Row y=6 on screen is a text row well inside the viewport.
+        await pilot.mouse_down(None, offset=(4, 6))
+        await pilot._post_mouse_events(  # noqa: SLF001
+            [events.MouseMove], None, offset=(20, 6))
+        await pilot.mouse_up(None, offset=(20, 6))
+        await pilot.pause()
+        selected = app.screen.get_selected_text()
+        assert selected and len(selected.splitlines()) == 1
+        assert "alpha" in selected
+        app.exit()

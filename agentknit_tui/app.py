@@ -426,6 +426,40 @@ class SelectableRichLog(RichLog):
         )
         return Strip.join([head, sel, tail])
 
+    def _cell_at(self, screen_x: int, screen_y: int) -> tuple[int, int] | None:
+        """Content ``(row, col)`` under a screen position, clamped to the text.
+
+        Textual's own mapping (``get_widget_and_offset_at``) is not used:
+        on a *scrolled* log it reports columns far to the right of the
+        pointer, so every drag selected an empty slice and nothing could be
+        copied. Deriving the cell from the content region and the scroll
+        offset is exact and needs no strip metadata.
+        """
+        region = self.content_region
+        lines = self.lines
+        if not lines:
+            return None
+        row = min(max(screen_y - region.y + int(self.scroll_y), 0), len(lines) - 1)
+        text = lines[row].text
+        col = screen_x - region.x + int(self.scroll_x)
+        return row, min(max(col, 0), max(len(text) - 1, 0))
+
+    def _drag_bounds(self, anchor: tuple[int, int],
+                     cell: tuple[int, int]) -> tuple[Offset, Offset] | None:
+        """Selection spanning *anchor* to *cell*, both ends included."""
+        if anchor[0] != cell[0]:
+            anchor, cell = sorted((anchor, cell))
+        (start_row, start_col), (end_row, end_col) = anchor, cell
+        lines = self.lines
+        if not 0 <= start_row < len(lines) or not 0 <= end_row < len(lines):
+            return None
+        if (start_row, start_col) > (end_row, end_col):
+            (start_row, start_col), (end_row, end_col) = (end_row, end_col), \
+                (start_row, start_col)
+        start = Offset(start_col, start_row)
+        end = Offset(end_col + 1, end_row)  # the cell under the pointer counts
+        return start, end
+
     def _click_bounds(
         self, event: events.Click, *, word: bool
     ) -> tuple[Offset, Offset] | None:
@@ -470,7 +504,32 @@ class SelectableRichLog(RichLog):
                 self.screen.selections = {self: Selection(*bounds)}
         await self.broker_event("click", event)
 
+    def _live_selection(self) -> Selection | None:
+        """The drag in progress, recomputed from the pointer in screen space.
+
+        Textual derives a drag's offsets from the ``offset`` metadata our
+        ``render_line`` writes into each strip, but the compositor caches
+        those strips per scroll position: as soon as the log scrolls (it
+        scrolls on every write, being bottom-pinned) the cached offsets are
+        stale and a drag is mapped to a column nowhere near the pointer. The
+        span then came out empty and nothing could be copied — the usual
+        one-line selection included. ``SelectState`` still carries the live
+        pointer positions, so the cells are computed from them instead.
+        """
+        state = getattr(self.screen, "_select_state", None)
+        if state is None or state.start.content_widget is not self:
+            return None
+        anchor = self._cell_at(*state.start.pointer_start_offset)
+        pointer = self._cell_at(*state.screen_offset)
+        if anchor is None or pointer is None:
+            return None
+        bounds = self._drag_bounds(anchor, pointer)
+        return Selection(*bounds) if bounds is not None else None
+
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
+        live = self._live_selection()
+        if live is not None:
+            selection = live
         lines = self.lines
         start, end = selection
         if start is None and end is None:
