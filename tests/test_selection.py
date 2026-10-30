@@ -195,3 +195,35 @@ async def test_same_line_drag_on_a_scrolled_log(
         assert selected and len(selected.splitlines()) == 1
         assert "alpha" in selected
         app.exit()
+
+
+@pytest.mark.parametrize(("start_x", "end_x"), [(4, 30), (30, 4)])
+@pytest.mark.asyncio
+async def test_drag_highlights_the_whole_span_either_way(
+    monkeypatch: pytest.MonkeyPatch, start_x: int, end_x: int,
+) -> None:
+    """Regression: a left→right drag highlighted only its first move.
+
+    The highlight comes from ``screen.selections``, which Textual derives
+    from the ``offset`` metadata in the rendered strips; on a scrolled log
+    those offsets are stale. A right→left drag came out right by accident,
+    so only the direction that happened to grow from the anchor showed.
+    """
+    app = _make_app(monkeypatch)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        log = app.query_one("#conversation")
+        log.clear()
+        for i in range(40):
+            log.write(Text(f"line {i} alpha beta gamma delta"))
+        await pilot.pause()
+        await pilot.mouse_down(None, offset=(start_x, 6))
+        await pilot._post_mouse_events(  # noqa: SLF001
+            [events.MouseMove], None,
+            offset=((start_x + end_x) // 2, 6))
+        await pilot.mouse_up(None, offset=(end_x, 6))
+        await pilot.pause()
+        start, end = app.screen.selections[log]
+        assert end.x - start.x >= abs(end_x - start_x) - 2
+        assert len(app.screen.get_selected_text()) >= abs(end_x - start_x) - 2
+        app.exit()

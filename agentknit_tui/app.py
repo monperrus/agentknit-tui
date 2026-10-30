@@ -504,6 +504,24 @@ class SelectableRichLog(RichLog):
                 self.screen.selections = {self: Selection(*bounds)}
         await self.broker_event("click", event)
 
+    async def _on_mouse_up(self, event: events.MouseUp) -> None:
+        """Commit the span the live pointer implies, so the highlight matches.
+
+        The highlight is drawn from ``screen.selections``, which Textual fills
+        from the ``offset`` metadata in our rendered strips. On a scrolled log
+        those offsets are stale, so a left→right drag was highlighted only as
+        far as its first move (right→left looked fine by accident). Copying
+        already recomputes the span; the highlight needs the same treatment.
+        """
+        await super()._on_mouse_up(event)
+        # A plain click cleared the selection on the way through: leave that
+        # alone and only repair a span the screen still holds.
+        if self not in self.screen.selections:
+            return
+        live = self._live_selection()
+        if live is not None:
+            self.screen.selections = {self: live}
+
     def _live_selection(self) -> Selection | None:
         """The drag in progress, recomputed from the pointer in screen space.
 
