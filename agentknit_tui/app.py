@@ -70,7 +70,7 @@ from rich.style import Style
 from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Span, Text
-from textual import on, work
+from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -284,6 +284,30 @@ def _fit_line(text: str, width: int) -> str:
 
 # ── selectable conversation log ───────────────────────────────────────────────
 
+# Characters that count as part of a word on double click, besides
+# alphanumerics: paths, URLs, flags and dotted identifiers come out whole.
+_WORD_CHARS = frozenset("_-./:@~+#%")
+
+
+def _word_bounds(text: str, x: int) -> tuple[int, int]:
+    """The ``[start, end)`` span of the word — or whitespace run — at cell *x*."""
+    if not text:
+        return 0, 0
+    index = min(max(x, 0), len(text) - 1)
+
+    def same_kind(pos: int) -> bool:
+        char = text[pos]
+        return char.isspace() if text[index].isspace() else (
+            char.isalnum() or char in _WORD_CHARS)
+
+    start = index
+    while start > 0 and same_kind(start - 1):
+        start -= 1
+    end = index + 1
+    while end < len(text) and same_kind(end):
+        end += 1
+    return start, end
+
 
 class SelectableRichLog(RichLog):
     """A ``RichLog`` that supports character-accurate mouse drag selection.
@@ -304,6 +328,11 @@ class SelectableRichLog(RichLog):
       base ``Widget.get_selection`` inspects ``_render()``, which for a
       multi-line log is not the text either.
 
+    Clicking behaves like a terminal rather than like a Textual widget:
+    double click selects the word under the pointer, triple click the line,
+    and neither steals keyboard focus from the prompt (see ``_on_click``
+    and ``can_focus``).
+
     Scrolling is bottom-pinned by position instead of the stock
     ``auto_scroll`` (which jumps to the end on *every* write, ripping the
     view away from whatever you scrolled up to read while the agent keeps
@@ -313,6 +342,13 @@ class SelectableRichLog(RichLog):
     to the bottom re-attaches. Textual's own ``anchor()`` is not used:
     its release/restore is unreliable across wheel and key scrolls.
     """
+
+    # Clicking the log must not steal keyboard focus from the prompt. After
+    # selecting text the operator pastes into the prompt; with the log
+    # focusable (stock ``RichLog`` is) every copy → paste detoured through a
+    # second click on the input, or pasted nothing at all. Keyboard scrolling
+    # is unaffected: PageUp/PageDown are priority app bindings.
+    can_focus = False
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -389,6 +425,50 @@ class SelectableRichLog(RichLog):
             sel.cell_length,
         )
         return Strip.join([head, sel, tail])
+
+    def _click_bounds(
+        self, event: events.Click, *, word: bool
+    ) -> tuple[Offset, Offset] | None:
+        """Span selected by a double (word) or triple (line) click.
+
+        ``event`` arrives in widget space (border and padding included), so
+        the content cell comes from subtracting ``gutter`` and adding the
+        scroll offset. The x coordinate is clamped to the line's length: a
+        click in the empty area right of the text would otherwise yield a
+        start offset past the end of the line.
+        """
+        gutter = self.gutter
+        scroll_x, scroll_y = self.scroll_offset
+        y = event.y - gutter.top + int(scroll_y)
+        lines = self.lines
+        if not 0 <= y < len(lines):
+            return None
+        text = lines[y].text
+        if not word:
+            return Offset(0, y), Offset(len(text), y)
+        x = min(max(event.x - gutter.left + int(scroll_x), 0), len(text))
+        start, end = _word_bounds(text, x)
+        return Offset(start, y), Offset(end, y)
+
+    async def _on_click(self, event: events.Click) -> None:
+        """Word on double click, line on triple click, like a terminal.
+
+        This overrides the base ``Widget._on_click``, which maps a double
+        click to *select the whole widget* and a triple click to *select
+        every widget on screen*. On a conversation log that turns one
+        habitual double click into "select the entire transcript", which is
+        the opposite of what the operator wants.
+        """
+        if event.widget is self and event.chain > 1:
+            # prevent_default is what actually keeps the base handler out:
+            # Textual dispatches to the handler of *every* class in the MRO,
+            # so without it Widget._on_click would still run its select-all
+            # afterwards and overwrite the span.
+            event.prevent_default()
+            bounds = self._click_bounds(event, word=event.chain == 2)
+            if bounds is not None:
+                self.screen.selections = {self: Selection(*bounds)}
+        await self.broker_event("click", event)
 
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
         lines = self.lines
