@@ -403,13 +403,15 @@ class SelectableRichLog(RichLog):
         start, end = span
         if end == -1:
             end = base.cell_length
-        # Strip.divide drops cuts beyond the cell length, so the number of
-        # parts varies; pad to exactly three (head, selection, tail).
-        cuts = [max(0, start), max(start, end)]
-        parts = list(base.divide(cuts))
-        while len(parts) < 3:
-            parts.append(Strip([], 0))
-        head, sel, tail = parts[0], parts[1], Strip.join(parts[2:])
+        # Crop, do not divide: ``Strip.divide`` returns one strip per cut and
+        # drops whatever follows the last one, so the tail of the line was
+        # never painted and the cells to the right of the selection kept the
+        # stale background.
+        start = min(max(start, 0), base.cell_length)
+        end = min(max(end, start), base.cell_length)
+        head = base.crop(0, start)
+        sel = base.crop(start, end)
+        tail = base.crop(end, base.cell_length)
         # Rich style addition lets the right-hand operand win, so plain
         # apply_style(sel_style) leaves the segment's own background in
         # place (style + segment_style). Compose the other way round to

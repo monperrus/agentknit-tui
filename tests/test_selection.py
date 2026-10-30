@@ -264,3 +264,44 @@ async def test_drag_highlight_follows_the_pointer(
         assert widths == sorted(widths), (path, widths)
         assert widths[-1] >= abs(end_x - start_x) - 2
         app.exit()
+
+
+@pytest.mark.asyncio
+async def test_drag_keeps_the_rest_of_the_line_rendered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: everything right of the selection vanished from the strip.
+
+    The highlight is painted by splitting the rendered line into head,
+    selection and tail; ``Strip.divide`` yields one strip per cut and drops
+    what follows, so the tail was empty and those cells kept a stale
+    background instead of the log's own.
+    """
+    app = _make_app(monkeypatch)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        log = app.query_one("#conversation")
+        log.clear()
+        for i in range(40):
+            log.write(Text(f"line {i} alpha beta gamma delta"))
+        await pilot.pause()
+        row = 6 - log.content_region.y
+        width = log.render_line(row).cell_length  # no selection yet
+        await pilot.mouse_down(None, offset=(4, 6))
+        await pilot._post_mouse_events(  # noqa: SLF001
+            [events.MouseMove], None, offset=(8, 6))
+        await pilot.mouse_up(None, offset=(12, 6))
+        await pilot.pause()
+
+        strip = log.render_line(row)
+        assert strip.cell_length == width
+        selection_bg = app.screen.get_component_rich_style(
+            "screen--selection").bgcolor
+        unselected = "".join(
+            segment.text for segment in strip._segments
+            if segment.style is None or segment.style.bgcolor != selection_bg
+        )
+        # The part beyond the pointer is still drawn, with the normal
+        # background: only the selected cells may be highlighted.
+        assert "gamma delta" in unselected
+        app.exit()
