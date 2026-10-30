@@ -504,22 +504,43 @@ class SelectableRichLog(RichLog):
                 self.screen.selections = {self: Selection(*bounds)}
         await self.broker_event("click", event)
 
-    async def _on_mouse_up(self, event: events.MouseUp) -> None:
-        """Commit the span the live pointer implies, so the highlight matches.
+    def _forward_event(self, event: events.Event) -> None:
+        """Keep the drag highlight in step with the pointer.
 
         The highlight is drawn from ``screen.selections``, which Textual fills
-        from the ``offset`` metadata in our rendered strips. On a scrolled log
-        those offsets are stale, so a left→right drag was highlighted only as
-        far as its first move (right→left looked fine by accident). Copying
-        already recomputes the span; the highlight needs the same treatment.
+        from the ``offset`` metadata in our rendered strips. On a bottom-pinned
+        log those strips are cached per scroll position, so the offsets are
+        stale: dragging right made the span *shrink* (a pointer further right
+        mapped to an earlier column) and the selection appeared to vanish.
+        Copying already recomputed the span from the live pointer; the
+        highlight needs the same treatment.
+
+        Moves must be caught here rather than in a ``MouseMove`` handler: the
+        screen consumes them and never dispatches them to widgets. The screen
+        folds the move into its select state right after this returns, so the
+        repair is deferred to the end of the frame to see the new pointer.
         """
+        super()._forward_event(event)
+        if not isinstance(event, events.MouseMove):
+            return
+        if not getattr(self.screen, "_selecting", False):
+            return
+        self.call_after_refresh(self._sync_live_selection)
+
+    async def _on_mouse_up(self, event: events.MouseUp) -> None:
         await super()._on_mouse_up(event)
-        # A plain click cleared the selection on the way through: leave that
-        # alone and only repair a span the screen still holds.
+        self._sync_live_selection()
+
+    def _sync_live_selection(self) -> None:
+        """Replace the highlighted span with the one the pointer implies.
+
+        A plain click cleared the selection on the way through, so an empty
+        selection here means "nothing to repair", not "repair to empty".
+        """
         if self not in self.screen.selections:
             return
         live = self._live_selection()
-        if live is not None:
+        if live is not None and self.screen.selections[self] != live:
             self.screen.selections = {self: live}
 
     def _live_selection(self) -> Selection | None:

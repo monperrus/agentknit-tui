@@ -227,3 +227,40 @@ async def test_drag_highlights_the_whole_span_either_way(
         assert end.x - start.x >= abs(end_x - start_x) - 2
         assert len(app.screen.get_selected_text()) >= abs(end_x - start_x) - 2
         app.exit()
+
+
+@pytest.mark.parametrize(("start_x", "end_x"), [(4, 30), (30, 4)])
+@pytest.mark.asyncio
+async def test_drag_highlight_follows_the_pointer(
+    monkeypatch: pytest.MonkeyPatch, start_x: int, end_x: int,
+) -> None:
+    """Regression: mid-drag the highlight *shrank* as the pointer advanced.
+
+    Strip offsets are cached per scroll position, so on a bottom-pinned log
+    a pointer further right mapped to an earlier column and the highlighted
+    span contracted until it vanished — i.e. dragging left→right never
+    showed the text it was covering.
+    """
+    app = _make_app(monkeypatch)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        log = app.query_one("#conversation")
+        log.clear()
+        for i in range(40):
+            log.write(Text(f"line {i} alpha beta gamma delta"))
+        await pilot.pause()
+        step = 4 if end_x > start_x else -4
+        path = [*range(start_x + step, end_x, step), end_x]
+        await pilot.mouse_down(None, offset=(start_x, 6))
+        await pilot.pause()
+        widths: list[int] = []
+        for x in path:
+            await pilot._post_mouse_events(  # noqa: SLF001
+                [events.MouseMove], None, offset=(x, 6))
+            await pilot.pause()
+            start, end = app.screen.selections[log]
+            widths.append(end.x - start.x)
+        # Growing all the way to the release point, never contracting.
+        assert widths == sorted(widths), (path, widths)
+        assert widths[-1] >= abs(end_x - start_x) - 2
+        app.exit()
