@@ -236,10 +236,11 @@ class _FlushMarkdown(Markdown):
             out: list[list[Segment]] = []
             for child in self.elements._renderables:  # noqa: SLF001
                 segments = console.render(child, options.update(width=width))
-                lines = [list(line) for line in Segment.split_lines(segments)]
-                if out:
-                    out[-1].pop()  # drop the child's trailing newline
-                out.extend(lines)
+                # Segment.split_lines consumes every line terminator, so the
+                # lines of two children concatenate directly: an item whose
+                # paragraph is followed by a nested list renders "text" then
+                # the nested bullets, never a swallowed trailing segment.
+                out.extend(list(line) for line in Segment.split_lines(segments))
             return out
 
     class _TableElement(TableElement):
